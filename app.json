@@ -1,0 +1,53 @@
+{
+  "name": "Cambridge_School",
+  "slug": "Cambridge_School",
+  "version": "1.0.0",
+  "orientation": "portrait",
+  "icon": "./assets/Cambridge_logo.png",
+  "userInterfaceStyle": "light",
+  "newArchEnabled": true,
+  "splash": {
+    "image": "./assets/Cambridge_logo.png",
+    "resizeMode": "contain",
+    "backgroundColor": "#ffffff"
+  },
+  "ios": {
+    "supportsTablet": true,
+    "infoPlist": {
+      "NSPhotoLibraryUsageDescription": "Ilovangiz galereyangizdan rasm va video tanlash uchun ruxsat so'raydi.",
+      "NSCameraUsageDescription": "Ilovangiz rasmga olish yoki video yozish uchun kamerangizga ruxsat so'raydi.",
+      "NSMicrophoneUsageDescription": "Ilovangiz ovozli xabar yozish uchun mikrofoningizga ruxsat so'raydi.",
+      "ITSAppUsesNonExemptEncryption": false
+    },
+    "bundleIdentifier": "com.rcsai.cambridgeschool"
+  },
+  "android": {
+    "adaptiveIcon": {
+      "foregroundImage": "./assets/Cambridge_logo.png",
+      "backgroundColor": "#ffffff"
+    },
+    "package": "com.anonymous.Cambridge_app",
+    "permissions": [
+      "READ_EXTERNAL_STORAGE",
+      "WRITE_EXTERNAL_STORAGE",
+      "CAMERA",
+      "RECORD_AUDIO",
+      "MODIFY_AUDIO_SETTINGS"
+    ]
+  },
+  "web": {
+    "favicon": "./assets/Cambridge_logo.png"
+  },
+  "plugins": [
+    "expo-av",
+    "expo-audio",
+    "expo-video",
+    "react-native-video",
+    "expo-web-browser"
+  ],
+  "extra": {
+    "eas": {
+      "projectId": "a3ec0862-1bfd-42c2-9d5b-7de1d42b81bb"
+    }
+  }
+}
