@@ -3,39 +3,70 @@
 # dependencies
 node_modules/
 
-# Expo
+# Expo / build outputs
 .expo/
+.expo-shared/
 dist/
 web-build/
 /android
 /ios
-.expo-shared/
 
+# (ixtiyoriy) EAS lokal cache
+.eas/
 
-
-# Native
+# Native / tooling
 .kotlin/
+.gradle/
+.idea/
+.vscode/
+
+# Merge leftovers
+*.orig
 *.orig.*
+
+# Signing & certificates
 *.jks
+*.keystore
+keystore.properties
 *.p8
 *.p12
+*.pem
+*.cer
+*.crt
+*.pfx
 *.key
 *.mobileprovision
+
+# Binary builds
+*.apk
+*.aab
+*.ipa
 
 # Metro
 .metro-health-check*
 
-# debug
+# Logs
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+*.log
 
-# macOS
+# OS
 .DS_Store
-*.pem
+Thumbs.db
 
-# local env files
+# Local env & secrets  ⚠️ MUHIM
+.env
 .env*.local
+serviceAccount.json
+google-services.json
+GoogleService-Info.plist
+firebase-debug.log
+.firebase/
+functions/.runtimeconfig.json
 
-# typescript
+# Firebase Functions vendored deps
+functions/node_modules/
+
+# TypeScript
 *.tsbuildinfo

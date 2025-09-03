@@ -16,7 +16,7 @@ import Notification from './screens/Notification';
 import News from './screens/News'
 import RegisterScreen from './screens/RegisterScreen';
 import StudentDetailScreen from './screens/StudentDetailScreen';
-import TeacherAvailabilityScreen  from './screens/TeacherAvailabilityScreen ';
+import TeacherAvailabilityScreen  from './screens/TeacherAvailabilityScreen';
 import LoginScreen from '../screens/LoginScreen';
 import Chat2 from './Chat2'
 
