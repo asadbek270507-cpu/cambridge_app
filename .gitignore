@@ -21,3 +21,5 @@ npm-shrinkwrap.json
 dist/
 build/
 .cache/
+
+package-lock.json
