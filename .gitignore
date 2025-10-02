@@ -8,16 +8,16 @@ android/build/
 ios/build/
 ios/Pods/
 
-# Lockfiles: Yarn ni qoldiramiz
+# Lockfiles: Yarn ishlatiladi -> package-lock/shrinkwrap kirmasin
 package-lock.json
 npm-shrinkwrap.json
 
-# Binar / installer / scriptlar
+# Binaries / installers / scripts
 *.msi
 *.exe
 *.bat
 *.ps1
-*.apk
+
 dist/
 build/
 .cache/
