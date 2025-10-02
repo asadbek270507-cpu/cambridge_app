@@ -1,72 +1,23 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
-
-# dependencies
 node_modules/
-
-# Expo / build outputs
 .expo/
 .expo-shared/
-dist/
-web-build/
-/android
-/ios
+.expo-cache/
+.expo/web/
+android/.gradle/
+android/build/
+ios/build/
+ios/Pods/
 
-# (ixtiyoriy) EAS lokal cache
-.eas/
+# Lockfiles: Yarn ni qoldiramiz
+package-lock.json
+npm-shrinkwrap.json
 
-# Native / tooling
-.kotlin/
-.gradle/
-.idea/
-.vscode/
-
-# Merge leftovers
-*.orig
-*.orig.*
-
-# Signing & certificates
-*.jks
-*.keystore
-keystore.properties
-*.p8
-*.p12
-*.pem
-*.cer
-*.crt
-*.pfx
-*.key
-*.mobileprovision
-
-# Binary builds
+# Binar / installer / scriptlar
+*.msi
+*.exe
+*.bat
+*.ps1
 *.apk
-*.aab
-*.ipa
-
-# Metro
-.metro-health-check*
-
-# Logs
-npm-debug.*
-yarn-debug.*
-yarn-error.*
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Local env & secrets  ⚠️ MUHIM
-.env
-.env*.local
-serviceAccount.json
-google-services.json
-GoogleService-Info.plist
-firebase-debug.log
-.firebase/
-functions/.runtimeconfig.json
-
-# Firebase Functions vendored deps
-functions/node_modules/
-
-# TypeScript
-*.tsbuildinfo
+dist/
+build/
+.cache/
