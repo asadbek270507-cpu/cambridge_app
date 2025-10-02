@@ -5669,10 +5669,10 @@ react-native-toast-message@^2.3.3:
   resolved "https://registry.npmjs.org/react-native-toast-message/-/react-native-toast-message-2.3.3.tgz"
   integrity sha512-4IIUHwUPvKHu4gjD0Vj2aGQzqPATiblL1ey8tOqsxOWRPGGu52iIbL8M/mCz4uyqecvPdIcMY38AfwRuUADfQQ==
 
-react-native-track-player@4.1.0:
-  version "4.1.0"
-  resolved "https://registry.npmjs.org/react-native-track-player/-/react-native-track-player-4.1.0.tgz#c9a32c1a2fbdacb22118eef02e840a7f67cf6819"
-  integrity sha512-r0yZHh/l622/RELccZnI1ujJrj7S02ystzmLWNaeYHw0y74Iz83De7XHoDKRu/r61UvSv0ks0jqSkUonWq/rPg==
+react-native-track-player@5.0.0-alpha0:
+  version "5.0.0-alpha0"
+  resolved "https://registry.npmjs.org/react-native-track-player/-/react-native-track-player-5.0.0-alpha0.tgz#687c9376ce71e59bd7703ee0ec0d98b5c119c489"
+  integrity sha512-dxMI8aX75wS9S5/DM7dWN060uGjEitX3fhvLGtrQ96AgIKvOorKy3HkBU7DgvCF/6YDAMxez2PaZA+4A3DQWAQ==
 
 react-native-vector-icons@^10.3.0:
   version "10.3.0"
