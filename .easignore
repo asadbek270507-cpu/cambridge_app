@@ -1,22 +1,27 @@
-# Always include lockfiles
-!yarn.lock
-!package-lock.json
-!npm-shrinkwrap.json
+# Lokalda tursin, EAS arxiviga kirmasin:
+android/
+ios/
 
-# Exclude heavy / local caches
+# Og‘ir kataloglar
 node_modules/
-.npm/
-.npmrc
 .expo/
 .expo-shared/
 .expo-cache/
 .expo/web/
-dist/
-build/
-.cache/
 
-# Android / iOS build outputs & caches
+# Android keshlar
 android/.gradle/
 android/build/
+
+# iOS kesh/Pods
 ios/build/
 ios/Pods/
+
+# Lockfiles: Yarn ishlatyapmiz
+package-lock.json
+npm-shrinkwrap.json
+
+# Binaries
+*.msi
+*.exe
+*.bat
