@@ -72,17 +72,7 @@ export default function StudentDetailScreen({ route, navigation }) {
 
       <View style={{ height: 16 }} />
 
-      <Text style={styles.label}>Set / Reset password</Text>
-      <TextInput
-        value={newPassword}
-        onChangeText={setNewPassword}
-        placeholder="Yangi parol (kamida 6)"
-        secureTextEntry
-        style={styles.input}
-      />
-      <TouchableOpacity style={[styles.btn, { backgroundColor: "#333" }]} onPress={setPassword}>
-        <Text style={styles.btnText}>Set new password</Text>
-      </TouchableOpacity>
+      
     </View>
   );
 }

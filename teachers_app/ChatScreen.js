@@ -1,41 +1,73 @@
-// src/screens/TeacherChatScreen.js
+// /screens/ChatScreen.js
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  ActivityIndicator, ImageBackground, Modal, TextInput, Alert
+  ActivityIndicator, Modal, TextInput, Alert, Image
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useNavigation } from "@react-navigation/native";
+
 import { auth, firestore } from "../firebase";
-import {
-  collection, onSnapshot, query, where, orderBy, getDoc, doc,
-  addDoc, writeBatch, setDoc, serverTimestamp
-} from "firebase/firestore";
 import Cambridge_logo from "../assets/Cambridge_logo.png";
 
-export default function TeacherInboxScreen({ navigation }) {
-  const teacherId = auth.currentUser?.uid || null;
+import {
+  collection, onSnapshot, query, where, orderBy, getDoc, doc,
+  addDoc, writeBatch, serverTimestamp, updateDoc, deleteDoc, getDocs,
+  limit as qLimit, arrayRemove, deleteField
+} from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
 
+/* ---------- Helper: pinned-first sort ---------- */
+const sortChats = (arr) =>
+  [...arr].sort(
+    (a, b) => (Number(!!b.pinned) - Number(!!a.pinned)) || (b._sort - a._sort)
+  );
+
+export default function ChatScreen() {
+  const navigation = useNavigation();
+
+  /* ========== AUTH ========== */
+  const [teacherId, setTeacherId] = useState(null);
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => setTeacherId(u?.uid ?? null));
+    return unsub;
+  }, []);
+
+  /* ========== STATE ========== */
   const [loading, setLoading] = useState(true);
-  const [items, setItems] = useState([]); // [{type:'group'|'dm', ...}]
-
-  // --- Create group modal state ---
+  const [items, setItems] = useState([]);        // unified list: groups + dms
+  const [roster, setRoster] = useState([]);      // students of teacher
   const [openCreate, setOpenCreate] = useState(false);
   const [groupName, setGroupName] = useState("");
-  const [roster, setRoster] = useState([]); // teacher yaratgan studentlar
   const [search, setSearch] = useState("");
   const [pickedIds, setPickedIds] = useState([]);
 
+  const [menuFor, setMenuFor] = useState(null); // {type, id, title, ...}
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // unread counts map: {`${type}:${id}`: number}
+  const [unreadMap, setUnreadMap] = useState({});
+  // mute map (indikator uchun)
+  const [muteMap, setMuteMap] = useState({});   // {`${type}:${id}`: boolean}
+
+  // pinned preview (listda)
+  const [pinMap, setPinMap] = useState({});     // {`${type}:${id}`: {id,text,by,at}}
+
+  // DM peers cache
+  const peerCacheRef = useRef({}); // { uid: {displayName, avatar, email} }
+
   const filteredRoster = useMemo(
-    () => roster.filter(s => (s.displayName || "").toLowerCase().includes(search.toLowerCase())),
+    () => roster.filter(s =>
+      (s.displayName || s.fullName || s.email || "")
+        .toLowerCase()
+        .includes(search.toLowerCase())
+    ),
     [roster, search]
   );
   const togglePick = (id) =>
     setPickedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
-  // DM taraf “qarshi tomonni” ism/avatari uchun oddiy cache
-  const peerCacheRef = useRef({}); // { userId: {displayName, avatar}}
-
-  // Header: title + plus (modal)
+  /* ========== HEADER ========== */
   useEffect(() => {
     navigation?.setOptions?.({
       headerTitle: "Chats",
@@ -47,29 +79,75 @@ export default function TeacherInboxScreen({ navigation }) {
     });
   }, [navigation]);
 
-  // Roster — teacher yaratgan students (index kerak bo'lsa fallback)
+  /* ========== ROSTER (teacher students) ========== */
   useEffect(() => {
     if (!teacherId) return;
     const col = collection(firestore, "users");
+
     const qOrdered = query(
       col,
       where("role", "==", "student"),
-      where("createdBy", "==", teacherId),
+      where("teacherId", "==", teacherId),
       orderBy("displayName", "asc")
     );
+
     let unsub = onSnapshot(
       qOrdered,
-      snap => setRoster(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      // fallback: orderBy'siz
+      (snap) => setRoster(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => {
-        const qPlain = query(col, where("role", "==", "student"), where("createdBy", "==", teacherId));
-        unsub = onSnapshot(qPlain, snap => setRoster(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+        const qPlain = query(
+          col,
+          where("role", "==", "student"),
+          where("teacherId", "==", teacherId)
+        );
+        unsub = onSnapshot(qPlain, (snap) =>
+          setRoster(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+        );
       }
     );
     return () => unsub && unsub();
   }, [teacherId]);
 
-  // Guruhlar + DMlarni tinglash va birlashtirish
+  /* ========== LISTEN GROUPS + DMS, UNREAD, MUTE, PIN ========== */
+  const perChatUnsubRefs = useRef({});
+
+  // 🔧 Unread now counts ONLY messages from others (senderId !== myUid)
+  const attachUnreadListener = (entry, readAt, myUid) => {
+    const key = `${entry.type}:${entry.id}`;
+    if (perChatUnsubRefs.current[key]) {
+      perChatUnsubRefs.current[key]();
+      delete perChatUnsubRefs.current[key];
+    }
+
+    const msgsCol =
+      entry.type === "group"
+        ? collection(firestore, `group_chats/${entry.id}/messages`)
+        : collection(firestore, `private_chats/${entry.id}/messages`);
+
+    const qMsgs = query(msgsCol, orderBy("createdAt", "desc"), qLimit(50));
+    const unsub = onSnapshot(
+      qMsgs,
+      (snap) => {
+        const ra = readAt?.toMillis?.() || 0;
+        let count = 0;
+        snap.docs.forEach(d => {
+          const m = d.data();
+          const t = m.createdAt?.toMillis?.() || 0;
+          // faqat boshqalar yuborganini sanaymiz
+          const fromOther = m.senderId && myUid && m.senderId !== myUid;
+          if (fromOther && t && t > ra) count += 1;
+        });
+        setUnreadMap(prev => ({ ...prev, [key]: count }));
+      },
+      (err) => {
+        if (err?.code !== "permission-denied") {
+          console.warn("snapshot error:", err);
+        }
+      }
+    );
+    perChatUnsubRefs.current[key] = unsub;
+  };
+
   useEffect(() => {
     if (!teacherId) { setItems([]); setLoading(false); return; }
 
@@ -92,20 +170,35 @@ export default function TeacherInboxScreen({ navigation }) {
     let unsubGroups, unsubDMs;
 
     const mergeAndSet = () => {
-      const g = groupsData.map(g => ({
-        _sort: (g.lastMessageAt?.toMillis?.() || g.createdAt?.toMillis?.() || 0),
-        type: "group",
-        id: g.id,
-        title: g.name || "Group",
-        subtitle: g.lastMessage || "",
-        time: g.lastMessageAt || g.createdAt || null,
-        leftIcon: "account-group",
-        data: g,
-      }));
+      const g = groupsData.map(g => {
+        const readAt = g.readBy?.[teacherId] || null;
+        const key = `group:${g.id}`;
+        setMuteMap(prev => ({ ...prev, [key]: Array.isArray(g.mutedBy) ? g.mutedBy.includes(teacherId) : false }));
+        if (g.pinnedMessage) setPinMap(prev => ({ ...prev, [key]: g.pinnedMessage }));
+        attachUnreadListener({ type: "group", id: g.id }, readAt, teacherId);
+
+        return {
+          _sort: (g.lastMessageAt?.toMillis?.() || g.createdAt?.toMillis?.() || 0),
+          type: "group",
+          id: g.id,
+          title: g.name || "Group",
+          subtitle: g.lastMessage || "",
+          time: g.lastMessageAt || g.createdAt || null,
+          data: g,
+          pinned: !!g.pinnedMessage,
+        };
+      });
 
       const d = dmsData.map(p => {
         const otherId = (p.participants || []).find(x => x !== teacherId) || null;
         const peer = otherId ? peerCacheRef.current[otherId] : null;
+
+        const readAt = p.readBy?.[teacherId] || null;
+        const key = `dm:${p.id}`;
+        setMuteMap(prev => ({ ...prev, [key]: Array.isArray(p.mutedBy) ? p.mutedBy.includes(teacherId) : false }));
+        if (p.pinnedMessage) setPinMap(prev => ({ ...prev, [key]: p.pinnedMessage }));
+        attachUnreadListener({ type: "dm", id: p.id }, readAt, teacherId);
+
         return {
           _sort: p.updatedAt?.toMillis?.() || 0,
           type: "dm",
@@ -113,16 +206,16 @@ export default function TeacherInboxScreen({ navigation }) {
           title: peer?.displayName || p.title || "Direct chat",
           subtitle: p.lastMessage || "",
           time: p.updatedAt || null,
-          leftIcon: "account",
           data: { ...p, otherId },
+          pinned: !!p.pinnedMessage,
         };
       });
 
-      setItems([...g, ...d].sort((a, b) => b._sort - a._sort));
+      setItems(sortChats([...g, ...d]));
       setLoading(false);
     };
 
-    // Groups (fallback bilan)
+    // Groups
     unsubGroups = onSnapshot(
       qGroups,
       (snap) => {
@@ -138,24 +231,28 @@ export default function TeacherInboxScreen({ navigation }) {
       }
     );
 
-    // DMs (fallback bilan)
+    // DMs
     unsubDMs = onSnapshot(
       qDMs,
       async (snap) => {
         const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         dmsData = rows;
-        // peer cache
+
         rows.forEach(async (r) => {
           const otherId = (r.participants || []).find(x => x !== teacherId);
           if (otherId && !peerCacheRef.current[otherId]) {
-            const s = await getDoc(doc(firestore, "users", otherId)).catch(() => null);
-            if (s?.exists()) {
-              peerCacheRef.current[otherId] = {
-                displayName: s.data().displayName || "User",
-                avatar: s.data().avatar || null,
-              };
-              mergeAndSet();
-            }
+            try {
+              const s = await getDoc(doc(firestore, "users", otherId));
+              if (s.exists()) {
+                const data = s.data() || {};
+                peerCacheRef.current[otherId] = {
+                  displayName: data.displayName || data.fullName || data.email || "User",
+                  avatar: data.avatar || null,
+                  email: data.email || null
+                };
+                mergeAndSet();
+              }
+            } catch {}
           }
         });
         mergeAndSet();
@@ -172,10 +269,12 @@ export default function TeacherInboxScreen({ navigation }) {
     return () => {
       unsubGroups && unsubGroups();
       unsubDMs && unsubDMs();
+      Object.values(perChatUnsubRefs.current).forEach((u) => u && u());
+      perChatUnsubRefs.current = {};
     };
   }, [teacherId]);
 
-  // Create group (modal → create)
+  /* ========== CREATE GROUP ========== */
   const createGroup = async () => {
     const name = groupName.trim();
     if (!teacherId) return;
@@ -183,7 +282,6 @@ export default function TeacherInboxScreen({ navigation }) {
     if (pickedIds.length === 0) return Alert.alert("Diqqat", "Kamida bitta o‘quvchi tanlang.");
 
     try {
-      // 1) group doc
       const gRef = await addDoc(collection(firestore, "groups"), {
         name,
         createdBy: teacherId,
@@ -192,9 +290,11 @@ export default function TeacherInboxScreen({ navigation }) {
         lastMessageAt: null,
         memberIds: [teacherId, ...pickedIds],
         membersCount: pickedIds.length + 1,
+        readBy: { [teacherId]: serverTimestamp() },
+        mutedBy: [],
+        pinnedMessage: null,
       });
 
-      // 2) subcollection: students + meta
       const batch = writeBatch(firestore);
 
       // teacher admin
@@ -208,7 +308,7 @@ export default function TeacherInboxScreen({ navigation }) {
       pickedIds.forEach((sid) => {
         const st = roster.find(r => r.id === sid);
         batch.set(doc(firestore, `groups/${gRef.id}/students`, sid), {
-          name: st?.displayName || "Student",
+          name: st?.displayName || st?.fullName || st?.email || "Student",
           avatar: st?.avatar || null,
           isAdmin: false,
           online: false,
@@ -216,7 +316,6 @@ export default function TeacherInboxScreen({ navigation }) {
         });
       });
 
-      // optional: group_chats meta
       batch.set(doc(firestore, `group_chats/${gRef.id}`), {
         createdAt: serverTimestamp(),
         lastMessageAt: null,
@@ -224,55 +323,202 @@ export default function TeacherInboxScreen({ navigation }) {
 
       await batch.commit();
 
-      // form reset + modal close
       setGroupName("");
       setPickedIds([]);
       setSearch("");
       setOpenCreate(false);
-      // Telegramdek: avtomatik navigate QILMAYMIZ — ro‘yxatda darhol ko‘rinadi
     } catch (e) {
       console.error("createGroup error", e);
       Alert.alert("Xatolik", "Guruh yaratilmadi.");
     }
   };
 
-  const openItem = (it) => {
-    if (it.type === "group") {
-      navigation.navigate("Chat2", {
-        groupId: it.id,
-        groupName: it.title,
-        teacherId,
-      });
-    } else {
-      navigation.navigate("Chat2", {
-        dmId: it.id,
-        peerId: it.data.otherId,
-        teacherId,
-      });
+  /* ========== OPEN CHAT (va read marker) ========== */
+  const openItem = async (it) => {
+    try {
+      if (it.type === "group") {
+        await updateDoc(doc(firestore, "groups", it.id), {
+          [`readBy.${teacherId}`]: serverTimestamp(),
+        });
+        // UX: badge-ni darhol 0 ga tushiramiz
+        setUnreadMap((m) => ({ ...m, [`group:${it.id}`]: 0 }));
+        navigation.navigate("Chat2", {
+          groupId: it.id,
+          groupName: it.title,
+          teacherId,
+          scrollToMessageId: pinMap[`group:${it.id}`]?.id || null,
+        });
+      } else {
+        await updateDoc(doc(firestore, "private_chats", it.id), {
+          [`readBy.${teacherId}`]: serverTimestamp(),
+        });
+        setUnreadMap((m) => ({ ...m, [`dm:${it.id}`]: 0 }));
+        navigation.navigate("Chat2", {
+          dmId: it.id,
+          peerId: it.data.otherId,
+          teacherId,
+          scrollToMessageId: pinMap[`dm:${it.id}`]?.id || null,
+        });
+      }
+    } catch {}
+  };
+
+  /* ========== 3 DOT MENU: PIN / DELETE ========== */
+  const togglePin = async () => {
+    if (!menuFor) return;
+    setActionLoading(true);
+    try {
+      const key = `${menuFor.type}:${menuFor.id}`;
+      const ref =
+        menuFor.type === "group"
+          ? doc(firestore, "groups", menuFor.id)
+          : doc(firestore, "private_chats", menuFor.id);
+
+      const currentlyPinned = !!pinMap[key];
+
+      if (currentlyPinned) {
+        await updateDoc(ref, { pinnedMessage: deleteField() });
+        setPinMap((m) => {
+          const cp = { ...m };
+          delete cp[key];
+          return cp;
+        });
+        setItems(prev => sortChats(prev.map(it => (
+          it.type === menuFor.type && it.id === menuFor.id ? { ...it, pinned: false } : it
+        ))));
+      } else {
+        const text = menuFor.subtitle || "Pinned message";
+        const pinned = { id: null, text, by: teacherId, at: serverTimestamp() };
+        await updateDoc(ref, { pinnedMessage: pinned });
+        setPinMap((m) => ({ ...m, [key]: { id: null, text } }));
+        setItems(prev => sortChats(prev.map(it => (
+          it.type === menuFor.type && it.id === menuFor.id ? { ...it, pinned: true } : it
+        ))));
+      }
+    } catch (e) {
+      Alert.alert("Xato", "Pin/Unpin bajarilmadi.");
+    } finally {
+      setActionLoading(false);
+      setMenuFor(null);
     }
   };
 
-  const renderItem = ({ item }) => (
-    <TouchableOpacity style={styles.row} onPress={() => openItem(item)}>
-      <View style={styles.avatar}>
-        <MaterialCommunityIcons name={item.leftIcon} size={20} color="#fff" />
+  const deleteChat = async () => {
+    if (!menuFor) return;
+    Alert.alert(
+      "O‘chirish",
+      menuFor.type === "group"
+        ? "Guruhni butunlay o‘chirmoqchimisiz?"
+        : "DM chatni o‘chirmoqchimisiz?",
+      [
+        { text: "Bekor", style: "cancel" },
+        {
+          text: "Ha", style: "destructive",
+          onPress: async () => {
+            try {
+              const key = `${menuFor.type}:${menuFor.id}`;
+              if (perChatUnsubRefs.current[key]) {
+                perChatUnsubRefs.current[key]();
+                delete perChatUnsubRefs.current[key];
+              }
+
+              if (menuFor.type === "group") {
+                const gRef = doc(firestore, "groups", menuFor.id);
+                const createdBy = menuFor?.data?.createdBy;
+                if (createdBy && createdBy !== teacherId) {
+                  await updateDoc(gRef, { memberIds: arrayRemove(teacherId) }).catch(()=>{});
+                } else {
+                  const delAll = async (subPath) => {
+                    const q = await getDocs(collection(firestore, subPath));
+                    await Promise.all(q.docs.map((d) => deleteDoc(d.ref)));
+                  };
+                  await delAll(`groups/${menuFor.id}/students`);
+                  await delAll(`groups/${menuFor.id}/reads`);
+                  await delAll(`groups/${menuFor.id}/mutes`);
+                  const msgs = await getDocs(collection(firestore, `group_chats/${menuFor.id}/messages`));
+                  await Promise.all(msgs.docs.map((d) => deleteDoc(d.ref)));
+                  await deleteDoc(doc(firestore, "group_chats", menuFor.id)).catch(()=>{});
+                  await deleteDoc(gRef).catch(()=>{});
+                }
+              } else {
+                const base = `private_chats/${menuFor.id}`;
+                const msgs = await getDocs(collection(firestore, `${base}/messages`));
+                await Promise.all(msgs.docs.map((d) => deleteDoc(d.ref)));
+                await deleteDoc(doc(firestore, base)).catch(()=>{});
+              }
+            } catch (e) {
+              Alert.alert("Xato", "O‘chirib bo‘lmadi.");
+            } finally {
+              setMenuFor(null);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  /* ========== RENDER ========== */
+  const renderItem = ({ item }) => {
+    const key = `${item.type}:${item.id}`;
+    const unread = unreadMap[key] || 0;
+    const muted = !!muteMap[key];
+    const pinned = pinMap[key];
+
+    return (
+      <View style={[styles.row, unread > 0 && styles.rowUnread]}>
+        <TouchableOpacity style={{ flex: 1, flexDirection: "row", alignItems: "center" }} onPress={() => openItem(item)}>
+          <View style={[styles.avatar, unread > 0 && styles.avatarUnread]}>
+            <MaterialCommunityIcons name={item.type === "group" ? "account-group" : "account"} size={20} color="#fff" />
+          </View>
+
+          <View style={styles.centerCol}>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Text style={[styles.title, unread > 0 && styles.titleUnread]} numberOfLines={1}>{item.title}</Text>
+              {unread > 0 && <View style={styles.dot} />}
+              {muted && <MaterialCommunityIcons name="bell-off" size={16} color="#9CA3AF" style={{ marginLeft: 6 }} />}
+            </View>
+
+            {pinned ? (
+              <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+                <MaterialCommunityIcons name="pin" size={14} color="#0D47A1" />
+                <Text style={[styles.subtitle, { marginLeft: 4, fontStyle: "italic" }]} numberOfLines={1}>
+                  {pinned.text || "Pinned message"}
+                </Text>
+              </View>
+            ) : (
+              <Text style={[styles.subtitle, unread > 0 && styles.subtitleUnread]} numberOfLines={1}>
+                {item.subtitle || "Start new chat"}
+              </Text>
+            )}
+          </View>
+        </TouchableOpacity>
+
+        <View style={styles.rightCol}>
+          <Text style={[styles.time, unread > 0 && styles.timeUnread]}>
+            {item.time?.toDate ? formatTime(item.time.toDate()) : ""}
+          </Text>
+          {unread > 0 && (
+            <View style={[styles.badge, muted && { backgroundColor: "#9CA3AF" }]}>
+              <Text style={styles.badgeTx}>{unread > 99 ? "99+" : unread}</Text>
+            </View>
+          )}
+        </View>
+
+        {/* 3 nuqta */}
+        <TouchableOpacity style={styles.moreBtn} onPress={() => setMenuFor(item)}>
+          <MaterialCommunityIcons name="dots-vertical" size={22} color="#6B7280" />
+        </TouchableOpacity>
       </View>
-      <View style={styles.centerCol}>
-        <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
-        <Text style={styles.subtitle} numberOfLines={1}>
-          {item.subtitle || "Yangi chat boshlang"}
-        </Text>
-      </View>
-      <View style={styles.rightCol}>
-        <Text style={styles.time}>
-          {item.time?.toDate ? formatTime(item.time.toDate()) : ""}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  );
+    );
+  };
 
   return (
-    <ImageBackground source={Cambridge_logo} style={styles.screen} imageStyle={styles.bgImage}>
+    <View style={styles.screen}>
+      {/* MARKAZDAGI FON LOGO */}
+      <View style={styles.bgContainer} pointerEvents="none">
+        <Image source={Cambridge_logo} style={styles.bgImage} />
+      </View>
+
       {loading ? (
         <View style={styles.center}><ActivityIndicator size="large" color="#8A0D0D" /></View>
       ) : items.length === 0 ? (
@@ -284,91 +530,151 @@ export default function TeacherInboxScreen({ navigation }) {
           data={items}
           keyExtractor={(it) => `${it.type}:${it.id}`}
           renderItem={renderItem}
-          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           contentContainerStyle={{ padding: 12 }}
         />
       )}
 
       {/* CREATE GROUP MODAL */}
-      <Modal visible={openCreate} transparent animationType="fade" onRequestClose={() => setOpenCreate(false)}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Yangi guruh</Text>
+      <CreateGroupModal
+        visible={openCreate}
+        onClose={() => setOpenCreate(false)}
+        groupName={groupName}
+        setGroupName={setGroupName}
+        search={search}
+        setSearch={setSearch}
+        roster={filteredRoster}
+        pickedIds={pickedIds}
+        togglePick={togglePick}
+        onCreate={createGroup}
+      />
 
-            <TextInput
-              placeholder="Guruh nomi"
-              value={groupName}
-              onChangeText={setGroupName}
-              style={[styles.input, { width: "100%", marginTop: 10 }]}
-              maxLength={60}
-              autoFocus
-            />
+      {/* 3 DOT MENU: Pin/Unpin va Delete */}
+      <Modal visible={!!menuFor} transparent animationType="fade" onRequestClose={() => setMenuFor(null)}>
+        <View style={styles.menuBackdrop}>
+          <View style={styles.menuCard}>
+            <Text style={styles.menuTitle}>{menuFor?.title || "Chat"}</Text>
 
-            <View style={[styles.searchRow, { marginTop: 10 }]}>
-              <MaterialCommunityIcons name="magnify" size={18} color="#6B7280" />
-              <TextInput
-                placeholder="Students izlash..."
-                value={search}
-                onChangeText={setSearch}
-                style={{ flex: 1, marginLeft: 8 }}
+            <TouchableOpacity style={styles.menuItem} onPress={togglePin} disabled={actionLoading}>
+              <MaterialCommunityIcons
+                name={pinMap[`${menuFor?.type}:${menuFor?.id}`] ? "pin-off" : "pin"}
+                size={18}
+                color="#0D47A1"
               />
-            </View>
+              <Text style={[styles.menuItemTx, { color: "#0D47A1" }]}>
+                {pinMap[`${menuFor?.type}:${menuFor?.id}`] ? "Unpin" : "Pin"}
+              </Text>
+            </TouchableOpacity>
 
-            <View style={{ marginTop: 10, maxHeight: 340 }}>
-              {roster.length === 0 ? (
-                <Text style={{ color: "#6B7280" }}>
-                  Roster bo‘sh. Avval o‘quvchilar uchun akkaunt yarating.
-                </Text>
-              ) : (
-                <FlatList
-                  data={filteredRoster}
-                  keyExtractor={(it) => it.id}
-                  ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-                  renderItem={({ item }) => {
-                    const picked = pickedIds.includes(item.id);
-                    return (
-                      <TouchableOpacity style={styles.pickItem} onPress={() => togglePick(item.id)}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 15, fontWeight: "600" }}>
-                            {item.displayName || "Student"}
-                          </Text>
-                          {item.email ? (
-                            <Text style={{ color: "#6B7280", marginTop: 2, fontSize: 12 }}>{item.email}</Text>
-                          ) : null}
-                        </View>
-                        <MaterialCommunityIcons
-                          name={picked ? "checkbox-marked-circle" : "checkbox-blank-circle-outline"}
-                          size={22}
-                          color={picked ? "#0D47A1" : "#9CA3AF"}
-                        />
-                      </TouchableOpacity>
-                    );
-                  }}
-                />
-              )}
-            </View>
+            <View style={{ height: 1, backgroundColor: "#E5E7EB" }} />
 
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.modalBtn, styles.modalCancel]} onPress={() => setOpenCreate(false)}>
-                <Text style={styles.modalCancelText}>Bekor</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalCreate, (!groupName.trim() || pickedIds.length === 0) && { opacity: 0.6 }]}
-                onPress={createGroup}
-                disabled={!groupName.trim() || pickedIds.length === 0}
-              >
-                <Text style={styles.modalCreateText}>
-                  Yaratish{pickedIds.length ? ` • ${pickedIds.length}` : ""}
-                </Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity style={styles.menuItem} onPress={deleteChat} disabled={actionLoading}>
+              <MaterialCommunityIcons name="delete-outline" size={18} color="#B91C1C" />
+              <Text style={[styles.menuItemTx, { color: "#B91C1C" }]}>Delete</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.modalBtn, { backgroundColor: "#f3f4f6", alignSelf: "flex-end", marginTop: 8 }]}
+              onPress={() => setMenuFor(null)}
+            >
+              <Text style={{ fontWeight: "700", color: "#111827" }}>Yopish</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
-    </ImageBackground>
+    </View>
   );
 }
 
+/* ====== CREATE GROUP MODAL (component) ====== */
+function CreateGroupModal({
+  visible, onClose, groupName, setGroupName,
+  search, setSearch, roster, pickedIds, togglePick, onCreate
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>Yangi guruh</Text>
+
+          <TextInput
+            placeholder="Guruh nomi"
+            value={groupName}
+            onChangeText={setGroupName}
+            style={[styles.input, { width: "100%", marginTop: 10 }]}
+            maxLength={60}
+            autoFocus
+          />
+
+          <View style={[styles.searchRow, { marginTop: 10 }]}>
+            <MaterialCommunityIcons name="magnify" size={18} color="#6B7280" />
+            <TextInput
+              placeholder="Students izlash..."
+              value={search}
+              onChangeText={setSearch}
+              style={{ flex: 1, marginLeft: 8 }}
+            />
+          </View>
+
+          <View style={{ marginTop: 10, maxHeight: 340 }}>
+            {roster.length === 0 ? (
+              <Text style={{ color: "#6B7280" }}>
+                Roster bo‘sh. Avval o‘quvchilar uchun akkaunt yarating.
+              </Text>
+            ) : (
+              <FlatList
+                data={roster}
+                keyExtractor={(it) => it.id}
+                ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+                renderItem={({ item }) => {
+                  const picked = pickedIds.includes(item.id);
+                  const name = item.displayName || item.fullName || item.email || "Student";
+                  return (
+                    <TouchableOpacity style={styles.pickItem} onPress={() => togglePick(item.id)}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 15, fontWeight: "600" }}>{name}</Text>
+                        {item.email ? (
+                          <Text style={{ color: "#6B7280", marginTop: 2, fontSize: 12 }}>{item.email}</Text>
+                        ) : null}
+                      </View>
+                      <MaterialCommunityIcons
+                        name={picked ? "checkbox-marked-circle" : "checkbox-blank-circle-outline"}
+                        size={22}
+                        color={picked ? "#0D47A1" : "#9CA3AF"}
+                      />
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            )}
+          </View>
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity style={[styles.modalBtn, styles.modalCancel]} onPress={onClose}>
+              <Text style={styles.modalCancelText}>Bekor</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.modalBtn,
+                styles.modalCreate,
+                (!groupName.trim() || pickedIds.length === 0) && { opacity: 0.6 },
+                { marginLeft: 10 }
+              ]}
+              onPress={onCreate}
+              disabled={!groupName.trim() || pickedIds.length === 0}
+            >
+              <Text style={styles.modalCreateText}>
+                Yaratish{pickedIds.length ? ` • ${pickedIds.length}` : ""}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/* ====== HELPERS / STYLES ====== */
 function pad(n){return n.toString().padStart(2,"0")}
 function formatTime(d){
   const hh = pad(d.getHours()); const mm = pad(d.getMinutes());
@@ -377,8 +683,21 @@ function formatTime(d){
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  bgImage: { opacity: 0.06, resizeMode: "cover" },
+  screen: { flex: 1, backgroundColor: "#F8FAFC" },
+
+  // MARKAZDAGI FON
+  bgContainer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  bgImage: {
+    width: "70%",
+    height: "70%",
+    resizeMode: "contain",
+    opacity: 0.08,
+  },
+
   center: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "transparent", paddingHorizontal: 16 },
   empty: { color: "#8A0D0D", fontSize: 16, textAlign: "center" },
 
@@ -386,25 +705,47 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center",
     backgroundColor: "#fff", borderRadius: 14, padding: 12,
     shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 5, shadowOffset: { width: 0, height: 2 },
+    marginBottom: 8
+  },
+  rowUnread: {
+    backgroundColor: "#EAF2FF",
+    borderWidth: 1,
+    borderColor: "#C7DBFF",
   },
   avatar: {
     width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center",
     backgroundColor: "#8A0D0D", marginRight: 12,
   },
+  avatarUnread: { backgroundColor: "#0D47A1" },
+
   centerCol: { flex: 1 },
   title: { fontSize: 15, fontWeight: "700", color: "#111827" },
+  titleUnread: { color: "#0D47A1" },
   subtitle: { fontSize: 12, color: "#6B7280", marginTop: 2 },
+  subtitleUnread: { color: "#0B3B91" },
+
   rightCol: { alignItems: "flex-end", marginLeft: 8 },
   time: { fontSize: 11, color: "#9CA3AF" },
+  timeUnread: { color: "#0B3B91", fontWeight: "700" },
 
-  // modal
+  moreBtn: { paddingHorizontal: 6, paddingVertical: 4, marginLeft: 4 },
+
+  // blue dot for unread
+  dot: {
+    width: 8, height: 8, borderRadius: 4, backgroundColor: "#0D47A1", marginLeft: 6
+  },
+
+  // badge
+  badge: { backgroundColor: "#0D47A1", minWidth: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center", marginTop: 6, paddingHorizontal: 6 },
+  badgeTx: { color: "#fff", fontWeight: "800", fontSize: 12 },
+
+  // create modal
   modalBackdrop: {
     flex: 1, backgroundColor: "rgba(0,0,0,0.35)",
     justifyContent: "center", alignItems: "center", padding: 16,
   },
   modalCard: { width: "100%", maxWidth: 520, backgroundColor: "#fff", borderRadius: 16, padding: 16 },
   modalTitle: { fontSize: 18, fontWeight: "800", color: "#111827" },
-
   input: {
     borderWidth: 1, borderColor: "#D1D5DB", paddingHorizontal: 12, paddingVertical: 10,
     borderRadius: 10, backgroundColor: "#fff",
@@ -418,11 +759,17 @@ const styles = StyleSheet.create({
     backgroundColor: "#F9FAFB", borderRadius: 10, padding: 12,
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
   },
-
-  modalActions: { flexDirection: "row", justifyContent: "flex-end", marginTop: 12, gap: 10 },
+  modalActions: { flexDirection: "row", justifyContent: "flex-end", marginTop: 12 },
   modalBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10 },
   modalCancel: { backgroundColor: "#f3f4f6" },
   modalCreate: { backgroundColor: "#0D47A1" },
   modalCancelText: { color: "#111827", fontWeight: "700" },
   modalCreateText: { color: "#fff", fontWeight: "700" },
+
+  // 3-dot menu
+  menuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "center", alignItems: "center", padding: 16 },
+  menuCard: { width: "100%", maxWidth: 420, backgroundColor: "#fff", borderRadius: 16, padding: 14 },
+  menuTitle: { fontSize: 16, fontWeight: "800", color: "#111827", marginBottom: 8 },
+  menuItem: { flexDirection: "row", alignItems: "center", paddingVertical: 10 },
+  menuItemTx: { marginLeft: 10, color: "#111827", fontWeight: "700" },
 });

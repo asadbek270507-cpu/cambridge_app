@@ -1,5 +1,4 @@
 // src/screens/ProfileScreen.js
-
 import React, { useEffect, useState } from "react";
 import {
   View,
@@ -10,29 +9,25 @@ import {
   StyleSheet,
   Dimensions,
   PixelRatio,
-  Linking,
   Platform,
   ActivityIndicator,
-  ImageBackground,          // ✅ BACKGROUND IMAGE
+  ImageBackground,
+  Linking,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useTheme } from "react-native-paper";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { signOut, onAuthStateChanged, updateProfile } from "firebase/auth";
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { auth, firestore, storage } from "../firebase";
-// import CustomHeader from "../components/CustomHeader"; // ❌ olib tashlandi
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import Toast from "react-native-toast-message";
+import Cambridge_logo from "../assets/Cambridge_logo.png";
 
-// ⬇️ Cambridge fon rasmini import qiling (yo‘lni loyihangizga moslang)
-import Cambridge_logo from "../assets/Cambridge_logo.png"; // <-- kerak bo‘lsa '../../assets/...' qiling
-
-// Ekran o'lchamlarini olish
+/* ---- Responsive helpers ---- */
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
-
-// Moslashuv
 const scale = SCREEN_WIDTH / 375;
 const normalize = (size) => Math.round(PixelRatio.roundToNearestPixel(size * scale));
 const RFValue = (fontSize) => {
@@ -45,6 +40,7 @@ const RFValue = (fontSize) => {
 export default function ProfileScreen() {
   const navigation = useNavigation();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -53,7 +49,7 @@ export default function ProfileScreen() {
   const [screenLoading, setScreenLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
 
-  // Foydalanuvchi holatini tinglash va profilni yuklash
+  /* ---- Load profile ---- */
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       try {
@@ -74,10 +70,9 @@ export default function ProfileScreen() {
           setEmail(data.email ?? user.email ?? "");
           setAvatarUri(data.avatar ?? user.photoURL ?? null);
 
-          // online flag
-          await updateDoc(userRef, { online: true, updatedAt: serverTimestamp() }).catch(() => {});
+          // best-effort online flag
+          updateDoc(userRef, { online: true, updatedAt: serverTimestamp() }).catch(() => {});
         } else {
-          // Birinchi kirishda hujjat yaratish
           const payload = {
             email: user.email ?? "",
             displayName: user.displayName ?? "",
@@ -102,7 +97,7 @@ export default function ProfileScreen() {
     return unsubscribe;
   }, []);
 
-  // Rasmni tanlash va yuklash
+  /* ---- Pick & upload avatar ---- */
   const pickImage = async () => {
     try {
       if (Platform.OS !== "web") {
@@ -133,13 +128,11 @@ export default function ProfileScreen() {
       await uploadBytes(imageRef, blob);
       const downloadURL = await getDownloadURL(imageRef);
 
-      // Firestore’ga yozish
       const userRef = doc(firestore, "users", auth.currentUser.uid);
       await updateDoc(userRef, { avatar: downloadURL, updatedAt: serverTimestamp() }).catch(async () => {
         await setDoc(userRef, { avatar: downloadURL, updatedAt: serverTimestamp() }, { merge: true });
       });
 
-      // Auth profile
       await updateProfile(auth.currentUser, { photoURL: downloadURL }).catch(() => {});
 
       setAvatarUri(downloadURL);
@@ -152,25 +145,19 @@ export default function ProfileScreen() {
     }
   };
 
-  // Ismni saqlash
+  /* ---- Save display name ---- */
   const saveProfile = async () => {
     if (!auth.currentUser) return;
     try {
       setIsUploading(true);
+      const cleanName = (name || "").trim();
 
       const userRef = doc(firestore, "users", auth.currentUser.uid);
-      await updateDoc(userRef, {
-        displayName: name?.trim() ?? "",
-        updatedAt: serverTimestamp(),
-      }).catch(async () => {
-        await setDoc(
-          userRef,
-          { displayName: name?.trim() ?? "", updatedAt: serverTimestamp() },
-          { merge: true }
-        );
+      await updateDoc(userRef, { displayName: cleanName, updatedAt: serverTimestamp() }).catch(async () => {
+        await setDoc(userRef, { displayName: cleanName, updatedAt: serverTimestamp() }, { merge: true });
       });
 
-      await updateProfile(auth.currentUser, { displayName: name?.trim() ?? "" }).catch(() => {});
+      await updateProfile(auth.currentUser, { displayName: cleanName }).catch(() => {});
 
       Toast.show({ type: "success", text1: "Saqlandi", text2: "Ism muvaffaqiyatli yangilandi." });
       setEditMode(false);
@@ -182,27 +169,20 @@ export default function ProfileScreen() {
     }
   };
 
-  // Logout
+  /* ---- Logout ---- */
   const handleLogout = async () => {
     try {
       const u = auth.currentUser;
       if (u) {
-        await updateDoc(doc(firestore, "users", u.uid), { online: false, updatedAt: serverTimestamp() }).catch(() => {});
+        updateDoc(doc(firestore, "users", u.uid), { online: false, updatedAt: serverTimestamp() }).catch(() => {});
       }
       await signOut(auth);
-
-      navigation.reset({
-        index: 0,
-        routes: [{ name: "LoginScreen" }],
-      });
+      navigation.reset({ index: 0, routes: [{ name: "LoginScreen" }] });
     } catch (e) {
       console.error("Tizimdan chiqishda xatolik:", e);
       Toast.show({ type: "error", text1: "Xatolik", text2: "Chiqishda muammo yuz berdi." });
     }
   };
-
-  const handleGoBack = () => navigation.goBack();
-  const handleContactDeveloper = () => Linking.openURL("https://t.me/Asadbek_2705");
 
   if (screenLoading) {
     return (
@@ -213,37 +193,30 @@ export default function ProfileScreen() {
   }
 
   return (
-    // ✅ BACKGROUND IMAGE bilan umumiy o‘rama
     <ImageBackground
       source={Cambridge_logo}
       style={{ flex: 1 }}
-      imageStyle={styles.bgImage} // shaffoflik va resize
+      imageStyle={styles.bgImage}
+      resizeMode="contain"
     >
       <View style={[styles.container, { backgroundColor: "transparent" }]}>
-        {/* ✅ Yangi header (o‘rtada PROFILE) */}
+        {/* 🔹 Top header with title */}
         <View
           style={[
             styles.header,
             {
-              backgroundColor: theme?.colors?.primary || "#6200EE",
-              shadowColor: "#000",
+              paddingTop: insets.top + normalize(6),
+              borderColor: theme?.colors?.outline || "#ddd",
             },
           ]}
         >
-          <TouchableOpacity onPress={handleGoBack} style={styles.headerIconLeft} activeOpacity={0.8}>
-            <MaterialCommunityIcons name="arrow-left" size={22} color={theme?.colors?.onPrimary || "#fff"} />
-          </TouchableOpacity>
-
-          <Text style={[styles.headerTitle, { color: theme?.colors?.onPrimary || "#fff" }]}>
-            PROFILE
+          <Text style={[styles.headerTitle, { color: theme?.colors?.onSurface || "#111" }]}>
+            Profile
           </Text>
-
-          {/* dekorativ “bo‘sh” zona yoki sozlamalar uchun future icon */}
-          <View style={styles.headerIconRight} />
         </View>
 
-        {/* CONTEXT */}
         <View style={styles.contentContainer}>
+          {/* Profile card */}
           <View
             style={[
               styles.profileCard,
@@ -270,7 +243,9 @@ export default function ProfileScreen() {
               )}
             </TouchableOpacity>
 
-            <Text style={[styles.name, { color: theme?.colors?.onSurface || "#111" }]}>{name || "Your Name"}</Text>
+            <Text style={[styles.name, { color: theme?.colors?.onSurface || "#111" }]}>
+              {name || "Your Name"}
+            </Text>
 
             {!!email && (
               <Text style={{ marginTop: 4, color: theme?.colors?.onSurfaceVariant || "#666", fontSize: RFValue(14) }}>
@@ -279,8 +254,8 @@ export default function ProfileScreen() {
             )}
           </View>
 
+          {/* Editable name row */}
           <View style={styles.optionsContainer}>
-            {/* Ism satri */}
             <View style={[styles.infoRow, { borderColor: theme?.colors?.outline || "#ddd" }]}>
               <Text style={[styles.infoLabel, { color: theme?.colors?.onSurface || "#111" }]}>Ism</Text>
 
@@ -314,17 +289,38 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Takliflar */}
+            {/* Contact Developer */}
             <TouchableOpacity
-              onPress={handleContactDeveloper}
-              style={[styles.button, { backgroundColor: theme?.colors?.tertiaryContainer || "#E8DEF8" }]}
+              onPress={() => {
+                const url = "https://t.me/Asadbek_2705";
+                Linking.openURL(url).catch(() =>
+                  Toast.show({ type: "error", text1: "Xatolik", text2: "Telegram ochilmadi." })
+                );
+              }}
+              activeOpacity={0.8}
+              style={[
+                styles.listRow,
+                {
+                  backgroundColor: theme?.colors?.tertiaryContainer || "#E8DEF8",
+                  borderColor: theme?.colors?.outline || "#ddd",
+                },
+              ]}
             >
-              <Text style={[styles.buttonText, { color: theme?.colors?.onTertiaryContainer || "#21005D" }]}>
-                Taklif va kamchiliklar uchun
-              </Text>
+              <View style={styles.listRowLeft}>
+                <View style={styles.listRowIconWrap}>
+                  <MaterialCommunityIcons
+                    name="telegram"
+                    size={RFValue(20)}
+                    color={theme?.colors?.onTertiaryContainer || "#21005D"}
+                  />
+                </View>
+                <Text style={[styles.listRowText, { color: theme?.colors?.onTertiaryContainer || "#21005D" }]}>
+                  Contact Developer
+                </Text>
+              </View>
               <MaterialCommunityIcons
-                name="telegram"
-                size={RFValue(18)}
+                name="chevron-right"
+                size={RFValue(22)}
                 color={theme?.colors?.onTertiaryContainer || "#21005D"}
               />
             </TouchableOpacity>
@@ -332,17 +328,32 @@ export default function ProfileScreen() {
             {/* Logout */}
             <TouchableOpacity
               onPress={handleLogout}
+              activeOpacity={0.8}
               style={[
-                styles.button,
+                styles.listRow,
                 {
                   backgroundColor: theme?.colors?.errorContainer || "#F9DEDC",
                   borderColor: theme?.colors?.error || "#B3261E",
-                  borderWidth: normalize(1),
                 },
               ]}
             >
-              <Text style={[styles.buttonText, { color: theme?.colors?.onErrorContainer || "#410E0B" }]}>Logout</Text>
-              <MaterialCommunityIcons name="logout" size={RFValue(18)} color={theme?.colors?.onErrorContainer || "#410E0B"} />
+              <View style={styles.listRowLeft}>
+                <View style={[styles.listRowIconWrap, { backgroundColor: "transparent" }]}>
+                  <MaterialCommunityIcons
+                    name="logout"
+                    size={RFValue(20)}
+                    color={theme?.colors?.onErrorContainer || "#410E0B"}
+                  />
+                </View>
+                <Text style={[styles.listRowText, { color: theme?.colors?.onErrorContainer || "#410E0B" }]}>
+                  Logout
+                </Text>
+              </View>
+              <MaterialCommunityIcons
+                name="chevron-right"
+                size={RFValue(22)}
+                color={theme?.colors?.onErrorContainer || "#410E0B"}
+              />
             </TouchableOpacity>
           </View>
         </View>
@@ -353,43 +364,24 @@ export default function ProfileScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  // ✅ Yangi header
+
+  /* 🔹 Header */
   header: {
-    height: 64,
-    paddingHorizontal: 16,
-    paddingTop: Platform.select({ ios: 10, android: 8, default: 8 }),
-    flexDirection: "row",
+    paddingHorizontal: normalize(16),
+    paddingBottom: normalize(10),
+    borderBottomWidth: StyleSheet.hairlineWidth,
     alignItems: "center",
-    justifyContent: "center",
-    borderBottomLeftRadius: 18,
-    borderBottomRightRadius: 18,
-    elevation: 6,
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
+    backgroundColor: "transparent",
   },
   headerTitle: {
-    fontSize: RFValue(18),
-    fontWeight: "800",
-    letterSpacing: 2,
-  },
-  headerIconLeft: {
-    position: "absolute",
-    left: 16,
-    height: "100%",
-    justifyContent: "center",
-  },
-  headerIconRight: {
-    position: "absolute",
-    right: 16,
-    height: "100%",
-    width: 24, // balans uchun
+    fontSize: RFValue(20),
+    fontWeight: "700",
   },
 
   contentContainer: {
     flex: 1,
     alignItems: "center",
-    paddingTop: normalize(20),
+    paddingTop: normalize(16),
     paddingHorizontal: normalize(20),
   },
   profileCard: {
@@ -426,6 +418,8 @@ const styles = StyleSheet.create({
     width: "100%",
     paddingHorizontal: normalize(10),
   },
+
+  /* --- Info row (name edit) --- */
   infoRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -453,28 +447,42 @@ const styles = StyleSheet.create({
     paddingVertical: normalize(5),
     borderRadius: normalize(8),
   },
-  button: {
+
+  /* --- List rows (Contact / Logout) --- */
+  listRow: {
     flexDirection: "row",
-    justifyContent: "center",
     alignItems: "center",
-    paddingVertical: normalize(15),
-    paddingHorizontal: normalize(20),
+    justifyContent: "space-between",
+    paddingVertical: normalize(14),
+    paddingHorizontal: normalize(14),
     borderRadius: normalize(12),
-    marginTop: normalize(20),
+    marginTop: normalize(16),
+    borderWidth: normalize(1),
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.06,
     shadowRadius: 4,
-    elevation: 3,
+    elevation: 2,
   },
-  buttonText: {
+  listRowLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: normalize(10),
+  },
+  listRowIconWrap: {
+    width: normalize(28),
+    height: normalize(28),
+    borderRadius: normalize(6),
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  listRowText: {
     fontWeight: "600",
     fontSize: RFValue(16),
-    marginRight: normalize(10),
   },
-  // ✅ Fon rasmi uslubi
+
+  /* --- Background image --- */
   bgImage: {
     opacity: 0.08,
-    resizeMode: "cover",
   },
 });

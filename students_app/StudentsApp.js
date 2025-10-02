@@ -1,12 +1,18 @@
-// StudentsApp.js
-import React from 'react';
-// NavigationContainer endi bu yerda kerak emas, asosiy App.js da mavjud
+// students_app/StudentsApp.js
+import 'react-native-reanimated';
+import React, { useEffect } from 'react';
+import { StatusBar, LogBox, UIManager, Platform, View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Provider as PaperProvider, DefaultTheme } from 'react-native-paper';
-import { SafeAreaView, StatusBar } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from '../firebase';
+import registerForPushNotificationsAsync from '../utils/registerForPushNotificationsAsync';
+
+// Screens
 import LoginScreen from '../screens/LoginScreen';
 import HomeScreen from './screens/HomeScreen';
 import ProfileScreen from './screens/ProfileScreen';
@@ -30,6 +36,23 @@ import ChatPlace from './screens/ChatPlace';
 import NotificationsListScreen from './screens/NotificationsListScreen';
 import ChatScreen from './screens/ChatScreen';
 
+// 🔊 Har doim tepada ko‘rinadigan mini-player (navigator ustiga qo‘yiladi)
+import GlobalAudioPlayer from '../components/GlobalAudioPlayer';
+
+/* ------------------ Top-level tweaks (warnings/compat) ------------------ */
+LogBox.ignoreLogs([
+  'setLayoutAnimationEnabledExperimental is currently a no-op in the New Architecture.',
+]);
+
+// Eski LayoutAnimation API faqat eski arxitektura uchun yoqiladi:
+if (
+  Platform.OS === 'android' &&
+  UIManager.setLayoutAnimationEnabledExperimental &&
+  !globalThis?.nativeFabricUIManager
+) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+/* ----------------------------------------------------------------------- */
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -53,7 +76,7 @@ function BottomTabs() {
         tabBarActiveTintColor: '#8A0D0D',
         tabBarStyle: { backgroundColor: '#fff' },
         tabBarIcon: ({ color, size }) => {
-          let iconName;
+          let iconName = 'home';
           if (route.name === 'Home') iconName = 'home';
           else if (route.name === 'Lessons') iconName = 'book-open-page-variant';
           else if (route.name === 'Chat') iconName = 'chat';
@@ -71,45 +94,76 @@ function BottomTabs() {
 }
 
 export default function StudentsApp() {
+  // ✅ Foydalanuvchi login bo‘lganda push tokenni olish (screen EMAS!)
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (u) registerForPushNotificationsAsync();
+    });
+    return unsub;
+  }, []);
+
   return (
-    <PaperProvider theme={theme}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
-        <StatusBar barStyle="dark-content" backgroundColor={theme.colors.background} />
-      <Stack.Navigator initialRouteName="Main">
-  {/* faqat Tabs uchun headerShown: false */}
-  <Stack.Screen
-    name="Main"
-    component={BottomTabs}
-    options={{ headerShown: false }}
-  />
+    <SafeAreaProvider>
+      <PaperProvider theme={theme}>
+        <SafeAreaView
+          style={{ flex: 1, backgroundColor: theme.colors.background }}
+          edges={['top', 'left', 'right']}
+        >
+          {/* Root konteynerni relative qilib, overlay komponentlar uchun zIndex/absolute ishlasin */}
+          <View style={{ flex: 1, position: 'relative' }}>
+            <StatusBar barStyle="dark-content" backgroundColor={theme.colors.background} />
 
-  {/* boshqa ekranlarda default header chiqadi */}
-  <Stack.Screen name="LoginScreen" component={LoginScreen} />
-  <Stack.Screen name="MultiLevel" component={MultiLevelScreen} />
-  <Stack.Screen name="ListeningScreen" component={ListeningScreen} />
-  <Stack.Screen name="ReadingScreen" component={ReadingScreen} />
-  <Stack.Screen name="WritingScreen" component={WritingScreen} />
-  <Stack.Screen name="SpeakingScreen" component={SpeakingScreen} />
-  <Stack.Screen name="ListeningLevel" component={ListeningLevel} />
-  <Stack.Screen name="ReadingLevel" component={ReadingLevel} />
-  <Stack.Screen name="SpeakingLevel" component={SpeakingLevel} />
-  <Stack.Screen name="GrammarScreen" component={GrammarScreen} />
-  <Stack.Screen name="IeltsScreen" component={IeltsScreen} />
-  <Stack.Screen name="MaterialsLevel" component={MaterialsLevel} />
-  <Stack.Screen name="GrammarMaterials" component={GrammarMaterials} />
-  <Stack.Screen name="LessonMaterials" component={LessonMaterials} />
-  <Stack.Screen name="WritingLevel" component={WritingLevel} />
-  <Stack.Screen name="LessonMaterialsScreen" component={LessonMaterialsScreen} />
+            {/* 🔊 Telegram-uslubidagi global mini-player
+                - absolute/top:8 bilan navigator ustida turadi
+                - pointerEvents default (playerning o‘zi bosiladi, qolgan joylar orqali tagidagi UI ishlaydi) */}
+            <GlobalAudioPlayer />
 
-  {/* Notifications ekrani — arrow + Notifications yozuvi chiqadi */}
-  <Stack.Screen
-    name="NotificationsListScreen"
-    component={NotificationsListScreen}
-    options={{ title: "Notifications" }}
-  />
-</Stack.Navigator>
+            <Stack.Navigator initialRouteName="Main" screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="Main" component={BottomTabs} />
 
-      </SafeAreaView>
-    </PaperProvider>
+              {/* Header kerak bo'lmagan ekranlar */}
+              <Stack.Screen name="LoginScreen" component={LoginScreen} />
+              <Stack.Screen name="MultiLevel" component={MultiLevelScreen} />
+              <Stack.Screen name="ListeningScreen" component={ListeningScreen} />
+              <Stack.Screen name="ReadingScreen" component={ReadingScreen} />
+              <Stack.Screen name="WritingScreen" component={WritingScreen} />
+              <Stack.Screen name="SpeakingScreen" component={SpeakingScreen} />
+              <Stack.Screen name="ListeningLevel" component={ListeningLevel} />
+              <Stack.Screen name="ReadingLevel" component={ReadingLevel} />
+              <Stack.Screen name="SpeakingLevel" component={SpeakingLevel} />
+              <Stack.Screen name="GrammarScreen" component={GrammarScreen} />
+              <Stack.Screen name="IeltsScreen" component={IeltsScreen} />
+              <Stack.Screen name="MaterialsLevel" component={MaterialsLevel} />
+              <Stack.Screen name="GrammarMaterials" component={GrammarMaterials} />
+              <Stack.Screen name="LessonMaterials" component={LessonMaterials} />
+              <Stack.Screen name="WritingLevel" component={WritingLevel} />
+              <Stack.Screen name="LessonMaterialsScreen" component={LessonMaterialsScreen} />
+
+              {/* Shu ikkitasida header ko'rinsin */}
+              <Stack.Screen
+                name="ChatScreen"
+                component={ChatScreen}
+                options={{
+                  headerShown: true,
+                  title: 'Chat',
+                  headerStyle: { backgroundColor: '#fff' },
+                  headerTintColor: '#111',
+                }}
+              />
+              <Stack.Screen
+                name="NotificationsListScreen"
+                component={NotificationsListScreen}
+                options={{
+                  headerShown: true,
+                  title: 'Notifications',
+                  headerStyle: { backgroundColor: '#fff' },
+                  headerTintColor: '#111',
+                }}
+              />
+            </Stack.Navigator>
+          </View>
+        </SafeAreaView>
+      </PaperProvider>
+    </SafeAreaProvider>
   );
 }
