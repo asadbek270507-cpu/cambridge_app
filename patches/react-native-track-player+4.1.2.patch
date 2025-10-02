@@ -1,0 +1,48 @@
+diff --git a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
+index b2409a0..1e6db5a 100644
+--- a/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
++++ b/node_modules/react-native-track-player/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
+@@ -25,7 +25,6 @@ import timber.log.Timber
+ import java.util.*
+ import javax.annotation.Nonnull
+ 
+-
+ /**
+  * @author Milen Pivchev @mpivchev
+  */
+@@ -228,7 +227,6 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+         playerSetUpPromise = promise
+         playerOptions = bundledData
+ 
+-
+         LocalBroadcastManager.getInstance(context).registerReceiver(
+             MusicEvents(context),
+             IntentFilter(EVENT_INTENT)
+@@ -255,7 +253,6 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+         if (verifyServiceBoundOrReject(callback)) return@launch
+ 
+         val options = Arguments.toBundle(data)
+-
+         options?.let {
+             musicService.updateOptions(it)
+         }
+@@ -340,7 +337,9 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+             } else {
+                 val context: ReactContext = context
+                 val track = musicService.tracks[index]
+-                track.setMetadata(context, Arguments.toBundle(map), musicService.ratingType)
++                // FIX: Arguments.toBundle(map) -> Bundle? ; setMetadata expects Bundle
++                val meta: Bundle = Arguments.toBundle(map) ?: Bundle()
++                track.setMetadata(context, meta, musicService.ratingType)
+                 musicService.updateMetadataForTrack(index, track)
+ 
+                 callback.resolve(null)
+@@ -614,7 +613,7 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+     @ReactMethod
+     fun getProgress(callback: Promise) = scope.launch {
+         if (verifyServiceBoundOrReject(callback)) return@launch
+-        var bundle = Bundle()
++        val bundle = Bundle()
+         bundle.putDouble("duration", musicService.getDurationInSeconds());
+         bundle.putDouble("position", musicService.getPositionInSeconds());
+         bundle.putDouble("buffered", musicService.getBufferedPositionInSeconds());
