@@ -1,301 +1,575 @@
-// src/screens/ChatScreen.js
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+// /screens/ChatScreen.js
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView,
   Platform, StyleSheet, Image, Modal, Pressable, Alert, Linking, AppState,
+  ImageBackground, Dimensions, ActivityIndicator, ActionSheetIOS
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import { useHeaderHeight } from '@react-navigation/elements';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import { firestore, auth, storage } from '../../firebase';
+import { Audio, Video } from 'expo-av';
+import Slider from '@react-native-community/slider';
 import {
   collection, addDoc, query, orderBy, onSnapshot, serverTimestamp,
-  doc, updateDoc, deleteDoc, getDoc,
+  doc, updateDoc, deleteDoc, getDoc, setDoc, getDocs, limit
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Video } from 'expo-av';
-import CustomHeader from '../../components/CustomHeader';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { onAuthStateChanged } from 'firebase/auth';
+
+import * as WebBrowser from 'expo-web-browser';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as IntentLauncher from 'expo-intent-launcher';
+import * as Sharing from 'expo-sharing';
+import * as MediaLibrary from 'expo-media-library';
+
+import { auth, firestore, storage } from '../../firebase';
 import avatarPlaceholder from '../../assets/avatar-placeholder.jpg';
-import { ImageBackground } from 'react-native';
 import Cambridge_logo from '../../assets/Cambridge_logo.png';
 
-export default function ChatScreen() {
-  const [messages, setMessages] = useState([]);
-  const [inputText, setInputText] = useState('');
-  const [modalVisible, setModalVisible] = useState(false);
-  const [modalImage, setModalImage] = useState(null);
-  const [editingId, setEditingId] = useState(null);
+// ---- GLOBAL for audio singleton (one tile plays at a time)
+let GLOBAL_ACTIVE_SOUND = { id: null, sound: null };
 
-  // reply preview
-  const [replyTarget, setReplyTarget] = useState(null); // {id, text, senderName}
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
-  const [membersCount, setMembersCount] = useState(0);
-  const [onlineCount, setOnlineCount] = useState(0);
-  const [showScrollDown, setShowScrollDown] = useState(false);
+/* ----------------- Helpers: open & save ----------------- */
+async function openWithChooser(remoteUrl, mimeType) {
+  try {
+    if (Platform.OS === 'android') {
+      await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+        data: remoteUrl, type: mimeType || '*/*',
+      });
+      return true;
+    }
+    const can = await Linking.canOpenURL(remoteUrl);
+    if (can) { await Linking.openURL(remoteUrl); return true; }
+  } catch (_) {}
+  return false;
+}
+async function saveToDevice(remoteUrl, displayName='file', mimeType) {
+  try {
+    const safe = encodeURIComponent(displayName || 'file');
+    const local = `${FileSystem.cacheDirectory}${safe}`;
+    const { uri } = await FileSystem.downloadAsync(remoteUrl, local);
 
-  const flatListRef = useRef(null);
-  const appState = useRef(AppState.currentState);
+    const isMedia = /^(image|video|audio)\//.test(mimeType||'');
+    if (isMedia) {
+      const perm = await MediaLibrary.requestPermissionsAsync();
+      if (perm.status === 'granted') { await MediaLibrary.saveToLibraryAsync(uri); Alert.alert('Saved','Fayl galereyaga saqlandi.'); return true; }
+    }
+    if (await Sharing.isAvailableAsync()) { await Sharing.shareAsync(uri, { mimeType, dialogTitle: 'Save to device' }); return true; }
+  } catch (_) {}
+  return false;
+}
+async function openPdfSmart(url) {
+  const ok = await openWithChooser(url, 'application/pdf'); if (ok) return true;
+  try {
+    const viewer = `https://drive.google.com/viewerng/viewer?embedded=true&url=${encodeURIComponent(url)}`;
+    await WebBrowser.openBrowserAsync(viewer); return true;
+  } catch (_) {}
+  return false;
+}
+const ext = (n='') => (n.split('.').pop()||'').toLowerCase();
+const isPdf = (name, mime) => (mime||'').includes('application/pdf') || ext(name)==='pdf';
 
-  const currentUserId = auth.currentUser?.uid || null;
+/* ---------- NEW: name helpers for DM header ---------- */
+const humanizeEmail = (email='') => {
+  const base = (email.split('@')[0] || '').replace(/[._-]+/g, ' ').trim();
+  return base ? base.replace(/\b\w/g, c => c.toUpperCase()) : email;
+};
+async function getUserDisplayName(uid) {
+  try {
+    const snap = await getDoc(doc(firestore, 'users', uid));
+    const u = snap.data() || {};
+    const name =
+      u.displayName ||
+      u.fullName ||
+      u.name ||
+      [u.firstName, u.lastName].filter(Boolean).join(' ') ||
+      null;
+    if (name && String(name).trim()) return String(name).trim();
+    if (u.email) return humanizeEmail(u.email);
+  } catch {}
+  return 'Direct chat';
+}
+/* ============================================================ */
 
-  // ---------- Presence (online) ----------
-  const heartbeatRef = useRef(null);
+export default function ChatScreen({ route }) {
+  const groupId = route?.params?.groupId ?? null;
+  const dmId    = route?.params?.dmId ?? null;
+  const initialGroupName = route?.params?.groupName ?? (dmId ? 'Direct chat' : 'Chat');
 
-  const setPresence = async (isOnline) => {
+  const headerHeight = useHeaderHeight();
+  const insets = useSafeAreaInsets();
+
+  /* -------- Auth -------- */
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  useEffect(() => onAuthStateChanged(auth, (u) => {
+    setCurrentUserId(u?.uid ?? null);
+    setAuthReady(true);
+  }), []);
+
+  // ---- Configure audio mode ONCE (correct key: interruptionModeIOS)
+  useEffect(() => {
+    (async () => {
+      try {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          staysActiveInBackground: false,
+          playsInSilentModeIOS: true,
+          interruptionModeIOS: Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX,
+          interruptionModeAndroid: Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: false,
+        });
+      } catch (e) {
+        console.warn('Audio mode set error', e);
+      }
+    })();
+  }, []);
+
+  /* -------- Presence (global + per-group) -------- */
+  const hb = useRef(null);
+  const ghb = useRef(null); // group heartbeat
+
+  const setGlobalPresence = useCallback(async (isOnline) => {
     if (!currentUserId) return;
     try {
-      await updateDoc(doc(firestore, 'users', currentUserId), {
-        isOnline,
-        lastActive: serverTimestamp(),
-      });
+      await setDoc(
+        doc(firestore, 'users', currentUserId),
+        { online: isOnline, lastActive: serverTimestamp() },
+        { merge: true }
+      );
     } catch {}
-  };
-
-  const startHeartbeat = () => {
-    stopHeartbeat();
-    heartbeatRef.current = setInterval(() => setPresence(true), 30_000);
-  };
-  const stopHeartbeat = () => {
-    if (heartbeatRef.current) {
-      clearInterval(heartbeatRef.current);
-      heartbeatRef.current = null;
-    }
-  };
-
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', async (nextState) => {
-      if (appState.current.match(/inactive|background/) && nextState === 'active') {
-        await setPresence(true);
-        startHeartbeat();
-      } else if (nextState.match(/inactive|background/)) {
-        await setPresence(false);
-        stopHeartbeat();
-      }
-      appState.current = nextState;
-    });
-    // first mount
-    setPresence(true);
-    startHeartbeat();
-    return () => {
-      sub.remove();
-      stopHeartbeat();
-      setPresence(false);
-    };
   }, [currentUserId]);
 
-  // Screen focus
-  useFocusEffect(
-    useCallback(() => {
-      setPresence(true);
-      startHeartbeat();
-      return () => {
-        stopHeartbeat();
-      };
-    }, [])
-  );
+  const setGroupPresence = useCallback(async (isOnline) => {
+    if (!currentUserId || !groupId) return;
+    try {
+      await setDoc(
+        doc(firestore, `groups/${groupId}/students`, currentUserId),
+        { lastActive: serverTimestamp(), online: isOnline },
+        { merge: true }
+      );
+    } catch {}
+  }, [currentUserId, groupId]);
 
-  // ---------- Real-time messages ----------
-  useEffect(() => {
-    const q = query(collection(firestore, 'chats'), orderBy('timestamp', 'desc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setMessages(msgs);
-    });
-    return () => unsub();
+  const startHeartbeats = useCallback(() => {
+    if (hb.current) clearInterval(hb.current);
+    hb.current = setInterval(() => setGlobalPresence(true), 25_000);
+
+    if (groupId) {
+      if (ghb.current) clearInterval(ghb.current);
+      ghb.current = setInterval(() => setGroupPresence(true), 25_000);
+    }
+  }, [groupId, setGlobalPresence, setGroupPresence]);
+
+  const stopHeartbeats = useCallback(() => {
+    if (hb.current) { clearInterval(hb.current); hb.current = null; }
+    if (ghb.current) { clearInterval(ghb.current); ghb.current = null; }
   }, []);
 
-  // ---------- Real-time members & online count ----------
   useEffect(() => {
-    const unsub = onSnapshot(collection(firestore, 'users'), (snapshot) => {
-      const now = Date.now();
-      const ONLINE_WINDOW_MS = 60_000; // 60s
-      let online = 0;
-
-      snapshot.forEach((d) => {
-        const u = d.data() || {};
-        const last = u.lastActive?.toDate ? u.lastActive.toDate().getTime() : 0;
-        if (u.isOnline || (last && now - last <= ONLINE_WINDOW_MS)) online += 1;
-      });
-
-      setMembersCount(snapshot.size);
-      setOnlineCount(online);
+    const sub = AppState.addEventListener('change', async (next) => {
+      if (AppState.currentState?.match?.(/inactive|background/) && next === 'active') {
+        await setGlobalPresence(true);
+        await setGroupPresence(true);
+        startHeartbeats();
+      } else if (next?.match?.(/inactive|background/)) {
+        await setGroupPresence(false);
+        await setGlobalPresence(false);
+        stopHeartbeats();
+      }
     });
-    return () => unsub();
-  }, []);
 
-  // ---------- Upload media ----------
-  const uploadMedia = async (uri, type) => {
-    const res = await fetch(uri);
-    const blob = await res.blob();
-    const filename = `${type}s/${Date.now()}`;
-    const storageRef = ref(storage, filename);
-    await uploadBytes(storageRef, blob);
-    return await getDownloadURL(storageRef);
-  };
+    setGlobalPresence(true);
+    setGroupPresence(true);
+    startHeartbeats();
 
-  // ---------- Send message (text/media/file) ----------
-  const sendMessage = async (content, type = 'text', name = null) => {
-    if (!currentUserId) {
-      Alert.alert('Xato', 'Foydalanuvchi aniqlanmadi. Qayta kiring.');
+    return () => {
+      sub.remove();
+      stopHeartbeats();
+      setGroupPresence(false);
+      setGlobalPresence(false);
+    };
+  }, [currentUserId, groupId, setGlobalPresence, setGroupPresence, startHeartbeats, stopHeartbeats]);
+
+  useFocusEffect(useCallback(() => {
+    setGlobalPresence(true);
+    setGroupPresence(true);
+    startHeartbeats();
+    return () => stopHeartbeats();
+  }, [startHeartbeats, stopHeartbeats, setGlobalPresence, setGroupPresence]));
+
+  /* -------- Title / members / permission -------- */
+  const [title, setTitle] = useState(initialGroupName);
+  const [canManage, setCanManage] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState(initialGroupName);
+
+  const [members, setMembers] = useState([]);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [membersCount, setMembersCount] = useState(0);
+  const [onlineCount, setOnlineCount] = useState(0);
+  const [membersLoading, setMembersLoading] = useState(true);
+
+  const [candidatesOpen, setCandidatesOpen] = useState(false);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidates, setCandidates] = useState([]);
+  const memberIds = useMemo(() => new Set(members.map(m => m.id)), [members]);
+
+  const [permError, setPermError] = useState(null);
+
+  useEffect(() => {
+    if (!authReady || !currentUserId) return;
+
+    // -------- DM HEADER: use profile name (fallback to humanized email)
+    if (dmId && !groupId) {
+      (async () => {
+        try {
+          const dmSnap = await getDoc(doc(firestore, 'private_chats', dmId));
+          const dm = dmSnap.data() || {};
+          const otherId = (dm.participants || []).find((x) => x !== currentUserId);
+          if (otherId) {
+            const nm = await getUserDisplayName(otherId);
+            setTitle(nm);
+          } else setTitle('Direct chat');
+        } catch { setTitle('Direct chat'); }
+      })();
       return;
     }
+
+    if (!groupId) return;
+    const gRef = doc(firestore, 'groups', groupId);
+    const unsub = onSnapshot(
+      gRef,
+      (snap) => {
+        if (snap.exists()) {
+          const g = snap.data();
+          if (g?.name) setTitle(g.name);
+          if (g?.createdBy === currentUserId) setCanManage(true);
+        }
+      },
+      (err) => setPermError(err.message)
+    );
+
+    (async () => {
+      try {
+        const mine = await getDoc(doc(firestore, `groups/${groupId}/students`, currentUserId));
+        if (mine.exists() && mine.data()?.isAdmin) setCanManage(true);
+      } catch {}
+    })();
+
+    return () => unsub();
+  }, [authReady, groupId, dmId, currentUserId]);
+
+  useEffect(() => {
+    if (!authReady || !currentUserId || !groupId) return;
+    setMembersLoading(true);
+    const unsub = onSnapshot(
+      collection(firestore, `groups/${groupId}/students`),
+      (snap) => {
+        const now = Date.now(), ONLINE_MS = 60_000;
+        let online = 0;
+        const list = snap.docs.map((d) => {
+          const u = d.data() || {};
+          const last = u.lastActive?.toDate ? u.lastActive.toDate().getTime() : 0;
+          const on = !!u.online || (last && now - last <= ONLINE_MS);
+          if (on) online += 1;
+          return { id: d.id, ...u, online: on };
+        });
+        setMembers(list);
+        setMembersCount(snap.size);
+        setOnlineCount(online);
+        setMembersLoading(false);
+      },
+      (err) => { setMembersLoading(false); setPermError(err.message); }
+    );
+    return () => unsub();
+  }, [authReady, groupId, currentUserId]);
+
+  const openCandidates = useCallback(async () => {
+    if (!groupId) return;
+    try {
+      setCandidatesLoading(true);
+      const snap = await getDocs(query(collection(firestore, 'users'), limit(100)));
+      const arr = [];
+      snap.forEach(d => {
+        const u = d.data() || {};
+        if (d.id !== currentUserId && !memberIds.has(d.id)) arr.push({ id: d.id, ...u });
+      });
+      setCandidates(arr);
+      setCandidatesOpen(true);
+    } catch {
+      Alert.alert('Xato', 'Nomzodlarni olib bo‘lmadi.');
+    } finally {
+      setCandidatesLoading(false);
+    }
+  }, [groupId, currentUserId, memberIds]);
+
+  /* -------- Messages -------- */
+  const [messages, setMessages] = useState([]);
+  const [loadingMsgs, setLoadingMsgs] = useState(true);
+  const flatListRef = useRef(null);
+  const prevLenRef = useRef(0);
+
+  useEffect(() => {
+    if (!authReady || !currentUserId) return;
+    setLoadingMsgs(true); setPermError(null);
+
+    let qRef;
+    if (groupId) qRef = query(collection(firestore, `group_chats/${groupId}/messages`), orderBy('createdAt', 'asc'));
+    else if (dmId) qRef = query(collection(firestore, `private_chats/${dmId}/messages`), orderBy('createdAt', 'asc'));
+    else qRef = query(collection(firestore, 'chats'), orderBy('timestamp', 'asc'));
+
+    const unsub = onSnapshot(
+      qRef,
+      (s) => { setMessages(s.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoadingMsgs(false); },
+      (err) => { setPermError(err.message); setLoadingMsgs(false); }
+    );
+    return () => unsub();
+  }, [authReady, groupId, dmId, currentUserId]);
+
+  useEffect(() => {
+    if (messages.length > prevLenRef.current) {
+      requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated: true }));
+    }
+    prevLenRef.current = messages.length;
+  }, [messages.length]);
+
+  /* -------- Upload & previews -------- */
+  const [inputText, setInputText] = useState('');
+  const [showScrollDown, setShowScrollDown] = useState(false);
+  const [modalImage, setModalImage] = useState(null);
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
+  const [filePreview, setFilePreview] = useState(null);
+  const [uploadPct, setUploadPct] = useState(null);
+
+  const uploadWithProgress = async (uri, storagePath, contentType) => {
+    const res = await fetch(uri); const blob = await res.blob();
+    const storageRef = ref(storage, storagePath);
+    const task = uploadBytesResumable(storageRef, blob, contentType ? { contentType } : undefined);
+    return await new Promise((resolve, reject) => {
+      task.on('state_changed',
+        (snap) => setUploadPct(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
+        reject,
+        async () => { const url = await getDownloadURL(task.snapshot.ref); setUploadPct(null); resolve(url); }
+      );
+    });
+  };
+
+  const pickImageOrVideo = async () => {
+    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 0.9 });
+    if (!r.canceled && r.assets?.length) {
+      const a = r.assets[0];
+      setFilePreview({ uri: a.uri, type: a.type === 'video' ? 'video' : 'image', name: (a.fileName || a.uri.split('/').pop() || '').split('?')[0] });
+      setImagePreviewOpen(true);
+    }
+  };
+
+  const pickDocument = async () => {
+    const r = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+    if (r.assets?.length) {
+      const f = r.assets[0];
+      const mime = f.mimeType || '';
+      const isAudio = mime.startsWith('audio/');
+      setFilePreview({ uri: f.uri, type: isAudio ? 'audio' : 'file', name: f.name || 'file', mimeType: mime || (isAudio ? 'audio/mpeg' : undefined), size: f.size || null });
+      setImagePreviewOpen(true);
+    }
+  };
+
+  const pathBase = useCallback(() => (groupId ? `groups/${groupId}` : dmId ? `dm/${dmId}` : `misc`), [groupId, dmId]);
+
+  const sendPreview = async () => {
+    if (!filePreview) return;
+    const ts = Date.now();
+    let path = '', url = '';
+    if (filePreview.type === 'image') {
+      path = `${pathBase()}/images/${ts}.jpg`;
+      url = await uploadWithProgress(filePreview.uri, path, 'image/jpeg');
+      await sendMessage(url, 'image');
+    } else if (filePreview.type === 'video') {
+      path = `${pathBase()}/videos/${ts}.mp4`;
+      url = await uploadWithProgress(filePreview.uri, path, 'video/mp4');
+      await sendMessage(url, 'video');
+    } else if (filePreview.type === 'audio') {
+      const e = (filePreview.name?.split('.').pop() || 'm4a').toLowerCase();
+      const ct = filePreview.mimeType || (e === 'mp3' ? 'audio/mpeg' : 'audio/m4a');
+      path = `${pathBase()}/audios/${ts}-${filePreview.name}`;
+      url = await uploadWithProgress(filePreview.uri, path, ct);
+      await sendMessage(url, 'audio', filePreview.name, { size: filePreview.size, mimeType: ct });
+    } else {
+      path = `${pathBase()}/files/${ts}-${filePreview.name}`;
+      url = await uploadWithProgress(filePreview.uri, path);
+      await sendMessage(url, 'file', filePreview.name, { size: filePreview.size, mimeType: filePreview.mimeType });
+    }
+    setFilePreview(null);
+    setImagePreviewOpen(false);
+  };
+
+  /* -------- CRUD -------- */
+  const [editingId, setEditingId] = useState(null);
+  const [replyTarget, setReplyTarget] = useState(null);
+
+  const sendMessage = async (content, type='text', name=null, meta=null) => {
+    if (!currentUserId) return Alert.alert('Xato', 'Foydalanuvchi aniqlanmadi.');
     if (type === 'text' && !editingId && !content?.trim()) return;
 
-    const userSnap = await getDoc(doc(firestore, 'users', currentUserId));
-    const userData = userSnap.data() || {};
+    let replyTo = null;
+    if (replyTarget) {
+      let safe = '';
+      if (replyTarget.type === 'text') safe = (replyTarget.text || '').slice(0,120);
+      else if (replyTarget.type === 'image') safe = '🖼️ Image';
+      else if (replyTarget.type === 'video') safe = '🎬 Video';
+      else if (replyTarget.type === 'audio') safe = `🎵 Audio: ${replyTarget.name || ''}`.trim();
+      else safe = `📎 File: ${replyTarget.name || ''}`.trim();
+      replyTo = { id: replyTarget.id, text: safe, senderName: replyTarget.senderName || '' };
+    }
+
+    const us = await getDoc(doc(firestore, 'users', currentUserId));
+    const u = us.data() || {};
+    const payload = {
+      text: content || '', senderId: currentUserId, senderName: u.displayName || 'User',
+      avatar: u.avatar || null, type, name: name || null,
+      size: meta?.size ?? null, mimeType: meta?.mimeType ?? null,
+      replyTo, createdAt: serverTimestamp(), timestamp: serverTimestamp(),
+    };
 
     if (editingId) {
-      await updateDoc(doc(firestore, 'chats', editingId), {
-        text: content,
-        type,
-        name,
-      });
+      await updateDoc(
+        groupId ? doc(firestore, `group_chats/${groupId}/messages`, editingId)
+        : dmId   ? doc(firestore, `private_chats/${dmId}/messages`, editingId)
+                 : doc(firestore, 'chats', editingId),
+        { text: content, type, name, size: payload.size, mimeType: payload.mimeType }
+      );
       setEditingId(null);
     } else {
-      await addDoc(collection(firestore, 'chats'), {
-        text: content || '',
-        senderId: currentUserId,
-        senderName: userData.displayName || 'User',
-        avatar: userData.avatar || null,
-        type,
-        name: name || null,
-        replyTo: replyTarget
-          ? {
-              id: replyTarget.id,
-              text: replyTarget.text?.slice(0, 120) || '',
-              senderName: replyTarget.senderName || '',
-            }
-          : null,
-        timestamp: serverTimestamp(),
-      });
+      const coll = groupId
+        ? collection(firestore, `group_chats/${groupId}/messages`)
+        : dmId
+        ? collection(firestore, `private_chats/${dmId}/messages`)
+        : collection(firestore, 'chats');
+
+      await addDoc(coll, payload);
+
+      const lastText = type === 'text' ? payload.text
+        : type === 'image' ? '🖼️ Image'
+        : type === 'video' ? '🎬 Video'
+        : type === 'audio' ? '🎵 Audio'
+        : '📎 File';
+
+      if (groupId) {
+        await updateDoc(doc(firestore, 'groups', groupId), { lastMessage: lastText, lastMessageAt: serverTimestamp() }).catch(()=>{});
+        await setGroupPresence(true);
+      } else if (dmId) {
+        await setDoc(doc(firestore, 'private_chats', dmId), { lastMessage: lastText, lastSender: currentUserId, updatedAt: serverTimestamp() }, { merge: true }).catch(()=>{});
+      }
+      await setGlobalPresence(true);
     }
-    setInputText('');
-    setReplyTarget(null);
+
+    setInputText(''); setReplyTarget(null);
+    requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated: true }));
   };
 
-  // ---------- Pick image/video ----------
-  const handlePickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
-      quality: 0.9,
-    });
-    if (!result.canceled && result.assets?.length > 0) {
-      const asset = result.assets[0];
-      const t = asset.type === 'video' ? 'video' : 'image';
-      const url = await uploadMedia(asset.uri, t);
-      sendMessage(url, t);
-    }
-  };
-
-  // ---------- Pick file ----------
-  const handlePickFile = async () => {
-    const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
-    if (result.assets && result.assets.length > 0) {
-      const file = result.assets[0];
-      const url = await uploadMedia(file.uri, 'file');
-      sendMessage(url, 'file', file.name);
-    }
-  };
-
-  // ---------- Delete & Edit ----------
   const handleDelete = (id) => {
-    Alert.alert('O‘chirish', 'Xabarni o‘chirilsinmi?', [
-      { text: 'Bekor qilish', style: 'cancel' },
-      { text: 'Ha', style: 'destructive', onPress: async () => await deleteDoc(doc(firestore, 'chats', id)) },
+    Alert.alert('O‘chirish', 'Xabarni o‘chirishni tasdiqlang', [
+      { text: 'Bekor', style: 'cancel' },
+      { text: 'Ha', style: 'destructive', onPress: async () =>
+        await deleteDoc(groupId ? doc(firestore, `group_chats/${groupId}/messages`, id)
+          : dmId ? doc(firestore, `private_chats/${dmId}/messages`, id)
+                 : doc(firestore, 'chats', id))
+      },
     ]);
   };
+  const handleEdit  = (msg) => { if (msg.type!=='text') return Alert.alert('Edit','Faqat matn xabarlarini tahrirlash mumkin.'); setInputText(msg.text); setReplyTarget(null); setEditingId(msg.id); };
+  const handleReply = (msg) => { setEditingId(null); setReplyTarget({ id: msg.id, text: msg.text, senderName: msg.senderName, type: msg.type, name: msg.name }); };
 
-  const handleEdit = (msg) => {
-    setInputText(msg.text);
-    setReplyTarget(null);
-    setEditingId(msg.id);
-  };
-
-  const handleReply = (msg) => {
-    setEditingId(null);
-    setReplyTarget({ id: msg.id, text: msg.text, senderName: msg.senderName });
-  };
-
-  // ---------- UI helpers ----------
-  const formatTime = (ts) => {
-    if (!ts?.toDate) return '';
-    const d = ts.toDate();
-    const hh = d.getHours().toString().padStart(2, '0');
-    const mm = d.getMinutes().toString().padStart(2, '0');
-    return `${hh}:${mm}`;
-  };
-
+  /* -------- UI helpers -------- */
+  const fmt = (ts) => { if (!ts?.toDate) return ''; const d = ts.toDate(); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
   const onListScroll = (e) => {
-    const y = e.nativeEvent.contentOffset.y;
-    setShowScrollDown(y > 100);
+    const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+    setShowScrollDown(!(layoutMeasurement.height + contentOffset.y >= contentSize.height - 60));
   };
+  const scrollToBottom = () => flatListRef.current?.scrollToEnd({ animated: true });
 
-  const scrollToBottom = () => {
-    flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-  };
+  const isAudioMsg = (m) =>
+    m?.type === 'audio' ||
+    (m?.mimeType && m.mimeType.startsWith('audio/')) ||
+    /\.(mp3|m4a|aac|wav|ogg)$/i.test(m?.name || '');
 
-  // ---------- Render message ----------
   const renderMessage = ({ item }) => {
     const isMe = item.senderId === currentUserId;
-
     const avatarSource = item.avatar ? { uri: item.avatar } : avatarPlaceholder;
 
     return (
-      <View style={[styles.msgRow, isMe ? { justifyContent: 'flex-end' } : { justifyContent: 'flex-start' }]}>
+      <View style={[styles.msgRow, isMe ? { justifyContent:'flex-end' } : { justifyContent:'flex-start' }]}>
         {!isMe && <Image source={avatarSource} style={styles.avatar} />}
 
         <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
-          {/* Sender + time */}
           <View style={styles.topRow}>
-            <Text style={[styles.sender, isMe ? styles.senderMe : styles.senderOther]}>
-              {isMe ? 'Siz' : item.senderName}
-            </Text>
-            <Text style={styles.time}>{formatTime(item.timestamp)}</Text>
+            <Text style={[styles.sender, isMe ? styles.senderMe : styles.senderOther]}>{isMe ? 'Siz' : item.senderName}</Text>
+            <Text style={[styles.time, isMe?{color:'#E5E7EB'}:{color:'#9CA3AF'}]}>{fmt(item.createdAt || item.timestamp)}</Text>
           </View>
 
-          {/* Reply preview */}
-          {item.replyTo ? (
+          {!!item.replyTo && (
             <View style={styles.replyBox}>
               <Text style={styles.replySender}>{item.replyTo.senderName}</Text>
               <Text style={styles.replyText} numberOfLines={2}>{item.replyTo.text}</Text>
             </View>
-          ) : null}
+          )}
 
-          {/* Body */}
-          {item.type === 'text' && <Text style={styles.bodyText}>{item.text}</Text>}
+          {item.type==='text'  && <Text style={[styles.bodyText, isMe && styles.bodyTextMe]}>{item.text}</Text>}
 
-          {item.type === 'image' && (
-            <TouchableOpacity onPress={() => { setModalImage(item.text); setModalVisible(true); }}>
+          {item.type==='image' && (
+            <TouchableOpacity onPress={() => setModalImage(item.text)}>
               <Image source={{ uri: item.text }} style={styles.imagePreview} />
             </TouchableOpacity>
           )}
 
-          {item.type === 'video' && (
+          {item.type==='video' && (
             <Video source={{ uri: item.text }} style={styles.videoPreview} useNativeControls resizeMode="contain" />
           )}
 
-          {item.type === 'file' && (
-            <TouchableOpacity onPress={() => Linking.openURL(item.text).catch(() => alert('Faylni ochib bo‘lmadi'))}>
-              <Text style={styles.fileLink}>📎 {item.name || 'Fayl'}</Text>
-            </TouchableOpacity>
+          {isAudioMsg(item) && (
+            <ChatAudioTile
+              id={item.id}
+              name={item.name || 'Audio'}
+              url={item.text}
+              size={item.size}
+              isMe={isMe}
+            />
           )}
 
-          {/* Actions */}
+          {!isAudioMsg(item) && item.type==='file' && (
+            <FileTile
+              name={item.name||'File'}
+              url={item.text}
+              size={item.size}
+              mimeType={item.mimeType}
+              isMe={isMe}
+            />
+          )}
+
           <View style={styles.actionRow}>
-            <TouchableOpacity onPress={() => handleReply(item)}>
-              <Text style={styles.replyLink}>Javob yozish</Text>
-            </TouchableOpacity>
-            {isMe && (
-              <View style={{ flexDirection: 'row' }}>
-                <TouchableOpacity onPress={() => handleEdit(item)} style={{ marginLeft: 12 }}>
-                  <MaterialCommunityIcons name="pencil" size={16} color="#6B7280" />
+            <TouchableOpacity onPress={() => handleReply(item)}><Text style={styles.replyLink}>Reply</Text></TouchableOpacity>
+            {isMe && item.type==='text' ? (
+              <View style={{ flexDirection:'row' }}>
+                <TouchableOpacity onPress={() => handleEdit(item)} style={{ marginLeft:12 }}>
+                  <MaterialCommunityIcons name="pencil" size={16} color="#FDE4E2" />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleDelete(item.id)} style={{ marginLeft: 12 }}>
+                <TouchableOpacity onPress={() => handleDelete(item.id)} style={{ marginLeft:12 }}>
                   <MaterialCommunityIcons name="delete" size={16} color="#EF4444" />
                 </TouchableOpacity>
               </View>
-            )}
+            ) : isMe ? (
+              <TouchableOpacity onPress={() => handleDelete(item.id)} style={{ marginLeft:12 }}>
+                <MaterialCommunityIcons name="delete" size={16} color="#EF4444" />
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
 
@@ -304,48 +578,111 @@ export default function ChatScreen() {
     );
   };
 
-  return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#F8FAFC' }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <CustomHeader groupName="Cambridge Innovation School" members={membersCount} online={onlineCount} />
+  /* ----------- RETURN UI ----------- */
+  if (!authReady) {
+    return (
+      <View style={{ flex:1, alignItems:'center', justifyContent:'center' }}>
+        <ActivityIndicator />
+        <Text style={{ marginTop:8 }}>Authenticating…</Text>
+      </View>
+    );
+  }
 
-      {/* Group pill */}
-      <View style={styles.groupCard}>
-        <Text style={styles.groupTitle}>Booster Group</Text>
-        <Text style={styles.groupMembers}>{membersCount} Members</Text>
-        <View style={styles.onlinePill}>
-          <View style={styles.onlineDot} />
-          <Text style={styles.onlineText}>{onlineCount} people online now</Text>
+  return (
+    <KeyboardAvoidingView
+      style={{ flex:1, backgroundColor:'#F8FAFC' }}
+      behavior={Platform.OS==='ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS==='ios' ? headerHeight : 0}
+    >
+      {/* Header */}
+      <View style={{ backgroundColor: 'transparent' }}>
+        <View style={styles.groupHeaderCard}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              style={{ flex:1 }}
+              onPress={() => (groupId ? setMembersOpen(true) : null)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
+            </TouchableOpacity>
+
+            {groupId ? (
+              <Text style={styles.membersBadge}>{membersCount} Members</Text>
+            ) : null}
+
+            {groupId && canManage && (
+              <View style={{ flexDirection:'row', marginLeft:8 }}>
+                <TouchableOpacity onPress={() => { setRenameValue(title); setRenameOpen(true); }} style={{ marginLeft:6 }}>
+                  <MaterialCommunityIcons name="pencil" size={18} color="#FDE4E2" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={openCandidates} style={{ marginLeft:10 }}>
+                  <MaterialCommunityIcons name="account-plus" size={20} color="#FDE4E2" />
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
         </View>
+
+        {groupId ? (
+          <View style={styles.subHeaderShadowWrap}>
+            <View style={styles.subHeaderInner}>
+              <View style={styles.onlineDotNew} />
+              <Text style={styles.subHeaderText}>
+                {onlineCount} {onlineCount === 1 ? 'Person' : 'People'} online now
+              </Text>
+            </View>
+          </View>
+        ) : null}
       </View>
 
-      {/* >>> CHAT BACKGROUND (Cambridge_logo) <<< */}
-      <View style={{ flex: 1 }}>
-        <ImageBackground source={Cambridge_logo} style={styles.bg} imageStyle={styles.bgImage}>
-          {/* Messages */}
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            renderItem={renderMessage}
-            keyExtractor={(item) => String(item.id)}
-            inverted
-            contentContainerStyle={{ padding: 12, paddingBottom: 24 }}
-            onScroll={onListScroll}
-            scrollEventThrottle={16}
-          />
+      {/* Body */}
+      <View style={{ flex:1 }}>
+        <ImageBackground source={Cambridge_logo} style={styles.bg} imageStyle={styles.bgImage} resizeMode="contain">
+          {!!permError && (
+            <View style={{ backgroundColor:'#FEE2E2', padding:8 }}>
+              <Text style={{ color:'#7F1D1D', fontWeight:'700' }}>Permission error: {String(permError)}</Text>
+            </View>
+          )}
 
-          {/* Scroll to bottom */}
+          {loadingMsgs ? (
+            <View style={{ flex:1, alignItems:'center', justifyContent:'center' }}><ActivityIndicator /></View>
+          ) : (
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              renderItem={renderMessage}
+              keyExtractor={(item)=>String(item.id)}
+              contentContainerStyle={{ paddingHorizontal:10, paddingTop:10, paddingBottom:12+insets.bottom }}
+              onScroll={onListScroll}
+              scrollEventThrottle={16}
+              keyboardShouldPersistTaps="always"
+              keyboardDismissMode={Platform.OS==='ios' ? 'interactive' : 'on-drag'}
+              ListEmptyComponent={<View style={{ padding:20, alignItems:'center' }}><Text>Hali xabar yo‘q. Birinchi xabarni yozing.</Text></View>}
+              removeClippedSubviews
+              initialNumToRender={16}
+              windowSize={10}
+              maxToRenderPerBatch={12}
+            />
+          )}
+
           {showScrollDown && (
             <TouchableOpacity style={styles.scrollBtn} onPress={scrollToBottom}>
               <MaterialCommunityIcons name="arrow-down" size={22} color="#fff" />
             </TouchableOpacity>
           )}
 
-          {/* Reply preview (input ustida) */}
           {replyTarget && (
             <View style={styles.replyPreview}>
-              <View style={{ flex: 1 }}>
+              <View style={{ flex:1 }}>
                 <Text style={styles.replyPreviewLabel}>Replying to {replyTarget.senderName}</Text>
-                <Text style={styles.replyPreviewText} numberOfLines={1}>{replyTarget.text}</Text>
+                <Text style={styles.replyPreviewText} numberOfLines={1}>
+                  {replyTarget.type==='text'
+                    ? replyTarget.text
+                    : replyTarget.type==='image' ? '🖼️ Image'
+                    : replyTarget.type==='video' ? '🎬 Video'
+                    : replyTarget.type==='audio' ? `🎵 Audio: ${replyTarget.name||''}`
+                    : `📎 File: ${replyTarget.name||''}`}
+                </Text>
               </View>
               <TouchableOpacity onPress={() => setReplyTarget(null)}>
                 <MaterialCommunityIcons name="close" size={20} color="#6B7280" />
@@ -354,13 +691,9 @@ export default function ChatScreen() {
           )}
 
           {/* Input row */}
-          <View style={styles.inputRow}>
-            <TouchableOpacity onPress={handlePickImage}>
-              <MaterialCommunityIcons name="image" size={24} color="#6B7280" />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={handlePickFile} style={{ marginLeft: 10 }}>
-              <MaterialCommunityIcons name="paperclip" size={24} color="#6B7280" />
-            </TouchableOpacity>
+          <View style={[styles.inputRow, { paddingBottom: Math.max(10, 10 + insets.bottom/2) }]}>
+            <TouchableOpacity onPress={pickImageOrVideo}><MaterialCommunityIcons name="image" size={24} color="#6B7280" /></TouchableOpacity>
+            <TouchableOpacity onPress={pickDocument} style={{ marginLeft:10 }}><MaterialCommunityIcons name="paperclip" size={24} color="#6B7280" /></TouchableOpacity>
 
             <TextInput
               style={styles.input}
@@ -368,6 +701,9 @@ export default function ChatScreen() {
               onChangeText={setInputText}
               placeholder="Message"
               placeholderTextColor="#9CA3AF"
+              onFocus={scrollToBottom}
+              returnKeyType="send"
+              onSubmitEditing={() => sendMessage(inputText)}
             />
 
             <TouchableOpacity onPress={() => sendMessage(inputText)} style={styles.sendButton}>
@@ -376,113 +712,488 @@ export default function ChatScreen() {
           </View>
         </ImageBackground>
       </View>
-      {/* >>> CHAT BACKGROUND END <<< */}
 
-      {/* Image modal */}
-      <Modal visible={modalVisible} transparent animationType="fade">
-        <Pressable style={styles.modalContainer} onPress={() => setModalVisible(false)}>
+      {/* Image preview */}
+      <Modal visible={!!modalImage} transparent animationType="fade" onRequestClose={() => setModalImage(null)}>
+        <Pressable style={styles.modalContainer} onPress={() => setModalImage(null)}>
           <Image source={{ uri: modalImage }} style={styles.fullImage} />
+        </Pressable>
+      </Modal>
+
+      {/* Attachment preview */}
+      <Modal visible={imagePreviewOpen} transparent animationType="slide" onRequestClose={() => setImagePreviewOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setImagePreviewOpen(false)}>
+          <Pressable style={styles.previewCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.previewTitle}>Preview</Text>
+
+            {!!filePreview && filePreview.type === 'image' && (
+              <Image source={{ uri: filePreview.uri }} style={{ width:'100%', height: Math.min(260, SCREEN_H*0.35), borderRadius:12 }} />
+            )}
+            {!!filePreview && filePreview.type === 'video' && (
+              <Video source={{ uri: filePreview.uri }} style={{ width:'100%', height: Math.min(260, SCREEN_H*0.35), borderRadius:12 }} useNativeControls resizeMode="contain" />
+            )}
+            {!!filePreview && (filePreview.type==='file' || filePreview.type==='audio') && (
+              <FileTile name={filePreview.name} url={filePreview.uri} local size={filePreview.size} mimeType={filePreview.mimeType} />
+            )}
+
+            {uploadPct != null && <View style={{ marginTop:10, alignItems:'center' }}><Text style={{ fontWeight:'700' }}>{uploadPct}%</Text></View>}
+
+            <View style={{ flexDirection:'row', justifyContent:'flex-end', marginTop:14 }}>
+              <TouchableOpacity style={[styles.rBtn, { backgroundColor:'#f3f4f6' }]} onPress={() => { setImagePreviewOpen(false); setFilePreview(null); }}>
+                <Text style={{ fontWeight:'700', color:'#111827' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.rBtn, { backgroundColor:'#0D47A1', marginLeft:8 }]} onPress={sendPreview}>
+                <Text style={{ fontWeight:'700', color:'#fff' }}>Send</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Rename */}
+      <Modal visible={renameOpen} transparent animationType="fade" onRequestClose={() => setRenameOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setRenameOpen(false)}>
+          <Pressable style={styles.renameCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.renameTitle}>Guruh nomi</Text>
+            <TextInput value={renameValue} onChangeText={setRenameValue} placeholder="Group name" style={styles.renameInput} maxLength={60} autoFocus />
+            <View style={{ flexDirection:'row', justifyContent:'flex-end', marginTop:10 }}>
+              <TouchableOpacity style={[styles.rBtn, { backgroundColor:'#f3f4f6' }]} onPress={() => setRenameOpen(false)}>
+                <Text style={{ fontWeight:'700', color:'#111827' }}>Bekor</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.rBtn, { backgroundColor:'#0D47A1', marginLeft:8 }]}
+                onPress={() => {
+                  if (!groupId) return;
+                  const val = (renameValue||'').trim(); if (!val) return;
+                  updateDoc(doc(firestore, 'groups', groupId), { name: val })
+                    .then(()=>{ setTitle(val); setRenameOpen(false); })
+                    .catch(()=> Alert.alert('Xato','Guruh nomi o‘zgartirilmadi.'));
+                }}
+              >
+                <Text style={{ fontWeight:'700', color:'#fff' }}>Saqlash</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Members */}
+      <Modal visible={membersOpen} transparent animationType="slide" onRequestClose={() => setMembersOpen(false)}>
+        <Pressable style={styles.membersBackdrop} onPress={() => setMembersOpen(false)}>
+          <Pressable style={styles.membersSheet} onPress={(e)=>e.stopPropagation()}>
+            <View style={styles.membersHeader}>
+              <Text style={styles.membersTitle}>Members</Text>
+              <TouchableOpacity onPress={() => setMembersOpen(false)}><MaterialCommunityIcons name="close" size={22} color="#111827" /></TouchableOpacity>
+            </View>
+            <Text style={styles.membersMeta}>{membersCount} total • {onlineCount} online</Text>
+
+            {membersLoading ? (
+              <View style={{ paddingVertical:20, alignItems:'center' }}><ActivityIndicator /></View>
+            ) : (
+              <FlatList
+                data={members}
+                keyExtractor={(it)=>it.id}
+                ItemSeparatorComponent={() => <View style={{ height:8 }} />}
+                renderItem={({ item }) => (
+                  <View style={styles.memberRow}>
+                    <View style={[styles.memberDot, { backgroundColor: item.online ? '#22C55E' : '#9CA3AF' }]} />
+                    <Text style={styles.memberName} numberOfLines={1}>{item.name || 'User'} {item.isAdmin ? '• admin' : ''}</Text>
+                  </View>
+                )}
+              />
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Candidates */}
+      <Modal visible={candidatesOpen} transparent animationType="slide" onRequestClose={() => setCandidatesOpen(false)}>
+        <Pressable style={styles.membersBackdrop} onPress={() => setCandidatesOpen(false)}>
+          <Pressable style={styles.membersSheet} onPress={(e)=>e.stopPropagation()}>
+            <View style={styles.membersHeader}>
+              <Text style={styles.membersTitle}>Add people</Text>
+              <TouchableOpacity onPress={() => setCandidatesOpen(false)}><MaterialCommunityIcons name="close" size={22} color="#111827" /></TouchableOpacity>
+            </View>
+
+            {candidatesLoading ? (
+              <View style={{ paddingVertical:20, alignItems:'center' }}><ActivityIndicator /></View>
+            ) : (
+              <FlatList
+                data={candidates}
+                keyExtractor={(it)=>it.id}
+                ItemSeparatorComponent={() => <View style={{ height:8 }} />}
+                renderItem={({ item }) => (
+                  <View style={styles.candRow}>
+                    <Text style={styles.candName} numberOfLines={1}>{item.displayName || item.fullName || item.email || 'User'}</Text>
+                    <TouchableOpacity style={styles.addBtn} onPress={async () => {
+                      try {
+                        await setDoc(doc(firestore, `groups/${groupId}/students`, item.id), {
+                          name: item.displayName || item.fullName || item.email || 'User',
+                          addedBy: currentUserId, isAdmin:false, joinedAt: serverTimestamp(), lastActive: serverTimestamp(), online: false,
+                        }, { merge: true });
+                        setCandidates(prev => prev.filter(x => x.id !== item.id));
+                      } catch { Alert.alert('Xato','Qo‘shib bo‘lmadi.'); }
+                    }}>
+                      <Text style={styles.addBtnTx}>Add</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+                ListEmptyComponent={<View style={{ paddingVertical:20, alignItems:'center' }}><Text>No candidates</Text></View>}
+              />
+            )}
+          </Pressable>
         </Pressable>
       </Modal>
     </KeyboardAvoidingView>
   );
 }
 
+/* ===== Utilities ===== */
+function formatBytes(bytes) {
+  if (!bytes && bytes !== 0) return '';
+  const units = ['B','KB','MB','GB']; let i = 0, v = bytes;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+/* ===== FILE/PDF tile ===== */
+function FileTile({ name, url, size=null, mimeType=null, local=false, isMe=false }) {
+  const pdf = isPdf(name, mimeType);
+
+  const onTap = async () => {
+    if (local) return;
+    const ok = pdf ? await openPdfSmart(url) : await openWithChooser(url, mimeType || '*/*');
+    if (!ok) Alert.alert('Xatolik', 'Ochish uchun mos ilova topilmadi.');
+  };
+  const onLong = () => {
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: ['Save to device', 'Open', 'Cancel'], cancelButtonIndex: 2 },
+        (i) => { if (i===0) saveToDevice(url, name, mimeType || (pdf?'application/pdf':undefined)); else if (i===1) onTap(); }
+      );
+    } else {
+      Alert.alert(name || 'File', undefined, [
+        { text: 'Save to device', onPress: () => saveToDevice(url, name, mimeType || (pdf?'application/pdf':undefined)) },
+        { text: 'Open', onPress: onTap },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    }
+  };
+
+  return (
+    <TouchableOpacity
+      onPress={onTap}
+      onLongPress={onLong}
+      delayLongPress={220}
+      activeOpacity={0.9}
+      style={[
+        styles.fileTile,
+        isMe ? styles.fileTileMe : styles.fileTileOther
+      ]}
+    >
+      <View style={[styles.fileIconWrap, pdf && { backgroundColor:'#FEE2E2' }]}>
+        <MaterialCommunityIcons name={pdf ? 'file-pdf-box' : 'paperclip'} size={20} color={pdf ? '#B91C1C' : '#0D47A1'} />
+      </View>
+
+      <View style={{ flex:1 }}>
+        <Text style={styles.fileName} numberOfLines={1}>{name}</Text>
+        <Text style={styles.fileMeta} numberOfLines={1}>{formatBytes(size) || (mimeType || '').split('/').pop()?.toUpperCase() || 'FILE'}</Text>
+      </View>
+
+      {!local && (
+        <MaterialCommunityIcons name="chevron-right" size={20} color="#64748B" style={{ marginLeft:6 }} />
+      )}
+    </TouchableOpacity>
+  );
+}
+
+/* ===== AUDIO tile (expo-av) ===== */
+function ChatAudioTile({ id, name, url, size=null, isMe=false }) {
+  const [sound, setSound] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [position, setPosition] = useState(0); // ms
+  const [duration, setDuration] = useState(0); // ms
+  const [loading, setLoading] = useState(false);
+
+  // cleanup on unmount
+  useEffect(() => {
+    return () => {
+      (async () => {
+        try {
+          if (sound) {
+            const shouldUnload = GLOBAL_ACTIVE_SOUND.id === id && GLOBAL_ACTIVE_SOUND.sound === sound;
+            await sound.unloadAsync();
+            if (shouldUnload) GLOBAL_ACTIVE_SOUND = { id: null, sound: null };
+          }
+        } catch {}
+      })();
+    };
+  }, [sound, id]);
+
+  const ensureLoaded = useCallback(async () => {
+    if (sound) return sound;
+    setLoading(true);
+    const s = new Audio.Sound();
+    try {
+      await s.loadAsync({ uri: url }, { shouldPlay: false, progressUpdateIntervalMillis: 500 }, false);
+      s.setOnPlaybackStatusUpdate((st) => {
+        if (!st) return;
+        if ('positionMillis' in st) setPosition(st.positionMillis || 0);
+        if ('durationMillis' in st && st.durationMillis) setDuration(st.durationMillis);
+        if (st.isLoaded) {
+          setIsPlaying(!!st.isPlaying);
+          if (st.didJustFinish) {
+            setIsPlaying(false);
+            setPosition(0);
+          }
+        }
+      });
+      setSound(s);
+      return s;
+    } catch (e) {
+      Alert.alert('Audio error', String(e?.message || e));
+      try { await s.unloadAsync(); } catch {}
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }, [sound, url]);
+
+  const stopGlobalIfOther = async () => {
+    try {
+      if (GLOBAL_ACTIVE_SOUND.sound && GLOBAL_ACTIVE_SOUND.id !== id) {
+        await GLOBAL_ACTIVE_SOUND.sound.stopAsync().catch(()=>{});
+        await GLOBAL_ACTIVE_SOUND.sound.unloadAsync().catch(()=>{});
+        GLOBAL_ACTIVE_SOUND = { id: null, sound: null };
+      }
+    } catch {}
+  };
+
+  const onPlayPause = async () => {
+    try {
+      await stopGlobalIfOther();
+      const s = await ensureLoaded();
+      if (!s) return;
+      const status = await s.getStatusAsync();
+      if (status.isLoaded && status.isPlaying) {
+        await s.pauseAsync();
+        setIsPlaying(false);
+      } else {
+        GLOBAL_ACTIVE_SOUND = { id, sound: s };
+        await s.playAsync();
+        setIsPlaying(true);
+      }
+    } catch (e) {
+      Alert.alert('Audio error', String(e?.message || e));
+    }
+  };
+
+  const onSeek = async (sec) => {
+    try {
+      const s = await ensureLoaded();
+      if (!s) return;
+      await s.setPositionAsync(Math.max(0, Math.floor(sec) * 1000));
+    } catch {}
+  };
+
+  const durationSec = Math.max(1, Math.floor((duration || 0) / 1000));
+  const positionSec = Math.floor((position || 0) / 1000);
+
+  const fmt = (ms) => {
+    const total = Math.floor((ms || 0) / 1000);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${String(m).padStart(1, '0')}:${String(s).padStart(2, '0')}`;
+  };
+
+  return (
+    <View style={[styles.audioTile, isMe ? styles.audioTileMe : styles.audioTileOther]}>
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={onPlayPause}
+        disabled={loading}
+        style={[styles.playBtn, { backgroundColor: isPlaying ? '#0EA5E9' : '#0D47A1', opacity: loading ? 0.6 : 1 }]}
+      >
+        <MaterialCommunityIcons name={isPlaying ? 'pause' : 'play'} size={18} color="#fff" />
+      </TouchableOpacity>
+
+      <View style={styles.audioContent}>
+        {!!name && <Text style={styles.fileName} numberOfLines={1}>{name}</Text>}
+        <Slider
+          style={styles.audioSlider}
+          minimumValue={0}
+          maximumValue={durationSec}
+          value={positionSec}
+          onSlidingComplete={onSeek}
+          minimumTrackTintColor="#0D47A1"
+          maximumTrackTintColor="#CBD5E1"
+          thumbTintColor="#0D47A1"
+        />
+        <View style={styles.audioMetaRow}>
+          <Text style={styles.fileMeta}>
+            {duration
+              ? `${fmt(position)} / ${fmt(duration)}`
+              : (size ? `${formatBytes(size)} • Audio` : 'Audio')}
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 /* -------------------- STYLES -------------------- */
 const RADIUS = 16;
-
 const styles = StyleSheet.create({
-  groupCard: {
-    marginTop: 8,
-    backgroundColor: '#B91C1C',
-    marginHorizontal: 12,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+  /* Header */
+  groupHeaderCard: {
+    backgroundColor:'#B91C1C',
+    marginHorizontal:12,
+    borderTopLeftRadius:22,
+    borderTopRightRadius:22,
+    borderBottomLeftRadius:28,
+    borderBottomRightRadius:28,
+    paddingHorizontal:16,
+    paddingTop:10,
+    paddingBottom:18,
   },
-  groupTitle: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  groupMembers: { color: '#fde4e2', marginTop: 2, fontSize: 12 },
-  onlinePill: {
-    marginTop: 8, alignSelf: 'flex-start', backgroundColor: '#fff',
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 9999, flexDirection: 'row', alignItems: 'center',
+  headerRow:{ flexDirection:'row', alignItems:'center' },
+  headerTitle:{ color:'#fff', fontWeight:'800', fontSize:16, maxWidth:SCREEN_W*0.6 },
+  membersBadge:{ color:'#FDE4E2', fontSize:12, fontWeight:'700' },
+
+  subHeaderShadowWrap:{
+    marginHorizontal:16,
+    marginTop:8,
+    backgroundColor:'#fff',
+    borderRadius:14,
+    paddingVertical:8,
+    paddingHorizontal:12,
+    shadowColor:'#000',
+    shadowOpacity:0.12,
+    shadowRadius:5,
+    shadowOffset:{ width:0, height:3 },
+    elevation:6,
   },
-  onlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#22C55E', marginRight: 6 },
-  onlineText: { color: '#111827', fontSize: 12, fontWeight: '600' },
+  subHeaderInner:{ flexDirection:'row', alignItems:'center' },
+  onlineDotNew:{ width:10, height:10, borderRadius:5, backgroundColor:'#22C55E', marginRight:8 },
+  subHeaderText:{ color:'#111827', fontSize:13, fontWeight:'800' },
 
-  msgRow: { flexDirection: 'row', alignItems: 'flex-end', marginVertical: 6, paddingHorizontal: 6 },
-  avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#e5e7eb' },
+  /* Messages */
+  msgRow:{ flexDirection:'row', alignItems:'flex-end', marginVertical:6, paddingHorizontal:6 },
+  avatar:{ width:28, height:28, borderRadius:14, backgroundColor:'#e5e7eb' },
 
-  bubble: {
-    maxWidth: '74%',
-    padding: 10,
-    borderRadius: RADIUS,
-    marginHorizontal: 8,
-    shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+  bubble:{ maxWidth:'78%', padding:8, borderRadius:RADIUS, marginHorizontal:8, shadowColor:'#000', shadowOpacity:0.06, shadowRadius:3, shadowOffset:{ width:0, height:1 }, elevation:1 },
+  bubbleOther:{ backgroundColor:'#F3F4F6', borderTopLeftRadius:6 },
+  bubbleMe:{ backgroundColor:'#3B82F6', borderTopRightRadius:6 },
+
+  topRow:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:2 },
+  sender:{ fontWeight:'700', fontSize:11 },
+  senderOther:{ color:'#111827' },
+  senderMe:{ color:'#E5E7EB' },
+  time:{ fontSize:10 },
+
+  replyBox:{ borderLeftWidth:3, borderLeftColor:'#C084FC', backgroundColor:'rgba(192,132,252,0.12)', padding:6, borderRadius:8, marginBottom:6 },
+  replySender:{ fontSize:11, fontWeight:'700', color:'#6D28D9' },
+  replyText:{ fontSize:11, color:'#374151', marginTop:2 },
+
+  bodyText:{ fontSize:14, lineHeight:20, color:'#111827' },
+  bodyTextMe:{ color:'#F8FAFC' },
+
+  replyLink:{ fontSize:11, color:'#2563EB' },
+  actionRow:{ marginTop:6, flexDirection:'row', justifyContent:'space-between', alignItems:'center' },
+
+  imagePreview:{ width:SCREEN_W*0.6, height:SCREEN_W*0.6, borderRadius:12, marginTop:4, maxWidth:320, maxHeight:320 },
+  videoPreview:{ width:SCREEN_W*0.65, height:SCREEN_W*0.42, borderRadius:12, marginTop:4, maxWidth:360, maxHeight:230 },
+
+  /* FILE tile */
+  fileTile:{
+    flexDirection:'row',
+    alignItems:'center',
+    borderRadius:14,
+    paddingHorizontal:10,
+    paddingVertical:8,
+    marginTop:4,
+    minHeight:52,
+    maxWidth: SCREEN_W * 0.78,
+    minWidth: 180,
+    alignSelf:'flex-start',
+    shadowColor:'#000',
+    shadowOpacity:0.06,
+    shadowRadius:3,
+    shadowOffset:{ width:0, height:1 },
+    elevation:1
   },
-  bubbleOther: { backgroundColor: '#F3F4F6', borderTopLeftRadius: 4 },
-  bubbleMe: { backgroundColor: '#3B82F6', borderTopRightRadius: 4 },
+  fileTileOther:{ backgroundColor:'#EEF2FF' },
+  fileTileMe:{ backgroundColor:'#DDEAFE', alignSelf:'flex-end' },
 
-  topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  sender: { fontWeight: '700', fontSize: 12 },
-  senderOther: { color: '#111827' },
-  senderMe: { color: '#E5E7EB' },
-  time: { fontSize: 10, color: '#9CA3AF', marginLeft: 8 },
+  fileIconWrap:{ width:28, height:28, borderRadius:8, backgroundColor:'#E0EAFF', alignItems:'center', justifyContent:'center', marginRight:10 },
+  fileName:{ fontSize:13, color:'#0F172A', fontWeight:'700' },
+  fileMeta:{ fontSize:11, color:'#475569', marginTop:2 },
 
-  replyBox: {
-    borderLeftWidth: 3, borderLeftColor: '#C084FC',
-    backgroundColor: 'rgba(192,132,252,0.1)',
-    padding: 6, borderRadius: 8, marginBottom: 6,
+  /* AUDIO tile */
+  audioTile:{
+    flexDirection:'row',
+    alignItems:'center',
+    borderRadius:14,
+    paddingHorizontal:10,
+    paddingVertical:8,
+    marginTop:4,
+    minHeight:50,
+    maxWidth: SCREEN_W * 0.78,
+    minWidth: 180,
+    shadowColor:'#000',
+    shadowOpacity:0.06,
+    shadowRadius:3,
+    shadowOffset:{ width:0, height:1 },
+    elevation:1
   },
-  replySender: { fontSize: 11, fontWeight: '700', color: '#6D28D9' },
-  replyText: { fontSize: 11, color: '#374151', marginTop: 2 },
+  audioTileOther:{ alignSelf:'flex-start', backgroundColor:'#E6F6FF' },
+  audioTileMe:{ alignSelf:'flex-end', backgroundColor:'#DDEAFE' },
 
-  bodyText: { fontSize: 14, lineHeight: 20, color: '#111827' },
-  replyLink: { fontSize: 11, color: '#2563EB' },
+  playBtn:{ width:32, height:32, borderRadius:16, alignItems:'center', justifyContent:'center', marginRight:10 },
 
-  actionRow: { marginTop: 6, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  audioContent:{ flex:1, minWidth:120 },
+  audioSlider:{ width:'100%', height:28, marginTop:2 },
+  audioMetaRow:{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginTop:2 },
 
-  imagePreview: { width: 180, height: 180, borderRadius: 10, marginTop: 4 },
-  videoPreview: { width: 220, height: 160, borderRadius: 10, marginTop: 4 },
-  fileLink: { color: '#1E90FF', textDecorationLine: 'underline', marginTop: 4, fontWeight: '600' },
+  /* Input */
+  inputRow:{ flexDirection:'row', alignItems:'center', paddingHorizontal:10, paddingTop:8, borderTopWidth:1, borderColor:'#E5E7EB', backgroundColor:'#fff' },
+  input:{ flex:1, borderRadius:22, borderWidth:1, borderColor:'#E5E7EB', marginHorizontal:10, paddingHorizontal:15, paddingVertical:Platform.OS==='ios'?10:8, color:'#111827', backgroundColor:'#F9FAFB' },
+  sendButton:{ backgroundColor:'#B91C1C', paddingVertical:10, paddingHorizontal:12, borderRadius:20, justifyContent:'center' },
 
-  // Input
-  inputRow: {
-    flexDirection: 'row', alignItems: 'center',
-    padding: 10, borderTopWidth: 1, borderColor: '#E5E7EB', backgroundColor: '#fff',
-  },
-  input: {
-    flex: 1, borderRadius: 22, borderWidth: 1, borderColor: '#E5E7EB',
-    marginHorizontal: 10, paddingHorizontal: 15, paddingVertical: Platform.OS === 'ios' ? 10 : 6, color: '#111827',
-    backgroundColor: '#F9FAFB',
-  },
-  sendButton: {
-    backgroundColor: '#B91C1C', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 20, justifyContent: 'center',
-  },
+  replyPreview:{ marginHorizontal:10, marginBottom:6, backgroundColor:'#F3F4F6', borderLeftWidth:4, borderLeftColor:'#2563EB', borderRadius:12, padding:8, flexDirection:'row', alignItems:'center', justifyContent:'space-between' },
+  replyPreviewLabel:{ fontSize:12, color:'#374151', fontWeight:'700' },
+  replyPreviewText:{ fontSize:12, color:'#6B7280', marginTop:2 },
 
-  // Reply preview pill
-  replyPreview: {
-    marginHorizontal: 10, marginBottom: 6, backgroundColor: '#F3F4F6',
-    borderLeftWidth: 4, borderLeftColor: '#2563EB', borderRadius: 12, padding: 8,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-  },
-  replyPreviewLabel: { fontSize: 12, color: '#374151', fontWeight: '700' },
-  replyPreviewText: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  /* Modals */
+  modalContainer:{ backgroundColor:'rgba(0,0,0,0.9)', flex:1, justifyContent:'center', alignItems:'center' },
+  fullImage:{ width:'100%', height:'100%', resizeMode:'contain' },
 
-  // Modal
-  modalContainer: { backgroundColor: 'rgba(0,0,0,0.9)', flex: 1, justifyContent: 'center', alignItems: 'center' },
-  fullImage: { width: '100%', height: '100%', resizeMode: 'contain' },
+  modalBackdrop:{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'center', alignItems:'center', padding:16 },
+  previewCard:{ width:'100%', maxWidth:480, backgroundColor:'#fff', borderRadius:16, padding:16 },
+  previewTitle:{ fontSize:16, fontWeight:'800', color:'#111827', marginBottom:10 },
 
-  // Scroll to bottom
-  scrollBtn: {
-    position: 'absolute', right: 16, bottom: 86, backgroundColor: '#B91C1C',
-    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', elevation: 4,
-  },
+  renameCard:{ width:'100%', maxWidth:420, backgroundColor:'#fff', borderRadius:16, padding:16 },
+  renameTitle:{ fontSize:16, fontWeight:'800', color:'#111827' },
+  renameInput:{ marginTop:10, borderWidth:1, borderColor:'#D1D5DB', borderRadius:10, paddingHorizontal:12, paddingVertical:10, backgroundColor:'#fff' },
+  rBtn:{ paddingVertical:10, paddingHorizontal:16, borderRadius:10 },
 
-  // >>> Background styles <<<
-  bg: { flex: 1, justifyContent: 'flex-end' },
-  bgImage: { opacity: 0.12, resizeMode: 'cover' },
+  /* Members/Candidates */
+  membersBackdrop:{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' },
+  membersSheet:{ maxHeight:'70%', backgroundColor:'#fff', borderTopLeftRadius:18, borderTopRightRadius:18, padding:14 },
+  membersHeader:{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' },
+  membersTitle:{ fontSize:16, fontWeight:'800', color:'#111827' },
+  membersMeta:{ marginTop:2, color:'#6B7280', marginBottom:10 },
+  memberRow:{ backgroundColor:'#F9FAFB', padding:12, borderRadius:10, flexDirection:'row', alignItems:'center' },
+  memberDot:{ width:10, height:10, borderRadius:5, marginRight:10 },
+  memberName:{ fontSize:14, color:'#111827', flex:1 },
+
+  candRow:{ backgroundColor:'#F9FAFB', padding:12, borderRadius:10, flexDirection:'row', alignItems:'center' },
+  candName:{ fontSize:14, color:'#111827', flex:1 },
+  addBtn:{ backgroundColor:'#0D47A1', paddingVertical:8, paddingHorizontal:12, borderRadius:10 },
+  addBtnTx:{ color:'#fff', fontWeight:'700' },
+
+  /* BG + scroll button */
+  bg:{ flex:1 },
+  bgImage:{ opacity:0.12, resizeMode:'contain' },
+  scrollBtn:{ position:'absolute', right:16, bottom:86, backgroundColor:'#B91C1C', width:40, height:40, borderRadius:20, alignItems:'center', justifyContent:'center', elevation:4 },
 });

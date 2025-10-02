@@ -65,7 +65,7 @@ function IELTSScreen() {
   return (
     <ImageBackground
       source={require('../../assets/Cambridge_logo.png')}
-      resizeMode="cover"
+      resizeMode="contain"
       style={styles.background}
       imageStyle={{ opacity: 0.15 }}
     >

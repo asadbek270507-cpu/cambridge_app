@@ -49,7 +49,7 @@ export default function LessonsScreen({ navigation }) {
         source={require('../../assets/Cambridge_logo.png')}
         style={styles.backgroundImage}
         imageStyle={styles.backgroundImageStyle}
-        resizeMode="cover"
+        resizeMode="contain"
       >
         <View style={styles.contentContainer}>
 
@@ -74,7 +74,7 @@ export default function LessonsScreen({ navigation }) {
           {/* MULTI LEVEL */}
           <TouchableOpacity onPress={() => navigation.navigate('MultiLevel')}>
             <LinearGradient
-              colors={['#11998e', '#38ef7d']}
+              colors={['#11998e', '#f95151ff']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.card}
@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   backgroundImageStyle: {
-    opacity: 0.5,
+    opacity: 0.1,
     alignSelf: 'center',
   },
   contentContainer: {

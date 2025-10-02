@@ -141,7 +141,7 @@ export default function ReadingLevel({ navigation }) {
       <ImageBackground
         source={require('../../assets/Cambridge_logo.png')}
         style={styles.backgroundImage}
-        resizeMode="cover"
+        resizeMode="contain"
         imageStyle={{ opacity: 0.15 }}
       >
         <Appbar.Header style={{ backgroundColor: theme.colors.primary }}>

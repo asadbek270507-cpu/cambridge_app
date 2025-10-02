@@ -1,0 +1,22 @@
+# Always include lockfiles
+!yarn.lock
+!package-lock.json
+!npm-shrinkwrap.json
+
+# Exclude heavy / local caches
+node_modules/
+.npm/
+.npmrc
+.expo/
+.expo-shared/
+.expo-cache/
+.expo/web/
+dist/
+build/
+.cache/
+
+# Android / iOS build outputs & caches
+android/.gradle/
+android/build/
+ios/build/
+ios/Pods/

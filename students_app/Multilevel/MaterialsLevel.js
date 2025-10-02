@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
+// screens/LessonMaterialsScreen.jsx
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -7,72 +8,128 @@ import {
   Dimensions,
   TouchableOpacity,
   ActivityIndicator,
-  Linking,
   Alert,
+  Platform,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { WebView } from "react-native-webview";
+// WebView importini endi tashqi kutubxona ichida ishlatamiz, bevosita kerak emas
+// import { WebView } from "react-native-webview";
+import YoutubePlayer from "react-native-youtube-iframe";
 import { Video, Audio } from "expo-av";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import Slider from "@react-native-community/slider";
+
 import { doc, getDoc } from "firebase/firestore";
 import { firestore } from "../../firebase";
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
 
+import * as WebBrowser from "expo-web-browser";
+import * as FileSystem from "expo-file-system/legacy";
+import * as IntentLauncher from "expo-intent-launcher";
+import * as Linking from "expo-linking";
+import * as Sharing from "expo-sharing";
+import ImageViewing from "react-native-image-viewing";
+
+const SCREEN_W = Dimensions.get("window").width;
+const YT_HEIGHT = SCREEN_W * (9 / 16);
+
+function getYoutubeId(url = "") {
+  const m = url.match(
+    /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]{6,})/
+  );
+  return m ? m[1] : null;
+}
+
 export default function MaterialsLevel({ route, navigation }) {
   const { partTitle, lessonId, lessonTitle, videoUrl: paramVideoUrl } = route.params || {};
   const insets = useSafeAreaInsets();
+
   const [loading, setLoading] = useState(true);
-  const [videoUrl, setVideoUrl] = useState(null);
+  const [ytId, setYtId] = useState(null);
+  const [videoUrl, setVideoUrl] = useState(null); // direct mp4 link bo‘lsa
   const [audioUrl, setAudioUrl] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
   const [answersUrl, setAnswersUrl] = useState(null);
   const [comments, setComments] = useState([]);
   const [title, setTitle] = useState(lessonTitle || "Dars materiali");
 
+  // Image viewer
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
+  const [images, setImages] = useState([]);
+
+  // Audio
   const soundRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
 
-  // 📌 PDF ochish
+  /* ------------ Helpers ------------ */
   const openPdf = async (url) => {
-    if (!url) {
-      Alert.alert("Xatolik", "PDF mavjud emas");
-      return;
-    }
     try {
-      const supported = await Linking.canOpenURL(url);
-      if (supported) {
-        await Linking.openURL(url);
-      } else {
-        Alert.alert("Xatolik", "PDF faylni ochib bo‘lmadi");
+      if (!url) return Alert.alert("Xatolik", "PDF mavjud emas");
+
+      let remoteUrl = url;
+      if (url.startsWith("gs://")) remoteUrl = await getDownloadURL(ref(getStorage(), url));
+
+      if (Platform.OS === "android") {
+        try {
+          await IntentLauncher.startActivityAsync("android.intent.action.VIEW", {
+            data: remoteUrl,
+            type: "application/pdf",
+          });
+          return;
+        } catch (_) {
+          try {
+            const localPath = `${FileSystem.cacheDirectory}temp.pdf`;
+            const { uri } = await FileSystem.downloadAsync(remoteUrl, localPath);
+            if (await Sharing.isAvailableAsync()) {
+              await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: "PDF-ni ochish" });
+              return;
+            }
+          } catch {}
+          const viewer = `https://drive.google.com/viewerng/viewer?embedded=true&url=${encodeURIComponent(remoteUrl)}`;
+          await WebBrowser.openBrowserAsync(viewer);
+          return;
+        }
       }
+
+      const localPath = `${FileSystem.cacheDirectory}temp.pdf`;
+      let fileUri = remoteUrl;
+      if (!remoteUrl.startsWith("file://")) {
+        const { uri } = await FileSystem.downloadAsync(remoteUrl, localPath);
+        fileUri = uri;
+      }
+      const canOpen = await Linking.canOpenURL(fileUri);
+      if (canOpen) return Linking.openURL(fileUri);
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: "application/pdf",
+          UTI: "com.adobe.pdf",
+          dialogTitle: "PDF-ni ochish",
+        });
+        return;
+      }
+      const viewer = `https://drive.google.com/viewerng/viewer?embedded=true&url=${encodeURIComponent(remoteUrl)}`;
+      await WebBrowser.openBrowserAsync(viewer);
     } catch (err) {
       console.error("PDF ochishda xatolik:", err);
-      Alert.alert("Xatolik", "Faylni ochishda muammo bo‘ldi");
+      Alert.alert("Xatolik", "PDF-ni ochishda muammo bo‘ldi.");
     }
   };
 
-  // 📌 Rasm ochish
   const openImage = async (url) => {
-    if (!url) {
-      Alert.alert("Xatolik", "Rasm mavjud emas");
-      return;
-    }
+    if (!url) return Alert.alert("Xatolik", "Rasm mavjud emas");
     try {
-      const supported = await Linking.canOpenURL(url);
-      if (supported) {
-        await Linking.openURL(url);
-      } else {
-        Alert.alert("Xatolik", "Rasmni ochib bo‘lmadi");
-      }
-    } catch (err) {
-      console.error("Rasm ochishda xatolik:", err);
-      Alert.alert("Xatolik", "Faylni ochishda muammo bo‘ldi");
+      let finalUrl = url;
+      if (url.startsWith("gs://")) finalUrl = await getDownloadURL(ref(getStorage(), url));
+      setImages([{ uri: finalUrl }]);
+      setImageViewerVisible(true);
+    } catch {
+      Alert.alert("Xatolik", "Rasmni ochib bo‘lmadi.");
     }
   };
 
+  /* ------------ Fetch lesson ------------ */
   useEffect(() => {
     const fetchLessonData = async () => {
       try {
@@ -80,51 +137,52 @@ export default function MaterialsLevel({ route, navigation }) {
           setLoading(false);
           return;
         }
+
         const lessonRef = doc(firestore, "multilevelMaterials", partTitle, "lessons", lessonId);
         const snap = await getDoc(lessonRef);
 
         if (snap.exists()) {
           const data = snap.data();
 
-          // Video
+          // Video (YouTube yoki to‘g‘ridan to‘g‘ri)
           let video = data.videoUrl || paramVideoUrl || null;
-          const getYoutubeEmbedUrl = (url) => {
-            if (!url) return null;
-            const regex = /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([\w-]+)/;
-            const match = url.match(regex);
-            return match && match[1] ? `https://www.youtube.com/embed/${match[1]}?autoplay=0&controls=1` : null;
-          };
-          const embedUrl = getYoutubeEmbedUrl(video);
-          if (embedUrl) setVideoUrl(embedUrl);
-          else if (video && video.startsWith("gs://")) {
-            const storageRef = ref(getStorage(), video);
-            const downloadUrl = await getDownloadURL(storageRef);
-            setVideoUrl(downloadUrl);
-          } else setVideoUrl(video);
+          const id = getYoutubeId(video || "");
+          if (id) {
+            setYtId(id);
+            setVideoUrl(null);
+          } else if (video) {
+            if (video.startsWith("gs://")) {
+              const vRef = ref(getStorage(), video);
+              video = await getDownloadURL(vRef);
+            }
+            setVideoUrl(video);
+          }
 
           // Audio
           if (data.audioUrl) {
             let audio = data.audioUrl;
             if (audio.startsWith("gs://")) {
-              const audioRef = ref(getStorage(), audio);
-              const audioDownloadUrl = await getDownloadURL(audioRef);
-              setAudioUrl(audioDownloadUrl);
-            } else setAudioUrl(audio);
+              const aRef = ref(getStorage(), audio);
+              audio = await getDownloadURL(aRef);
+            }
+            setAudioUrl(audio);
           }
 
           // PDF / Answers
           if (data.pdfUrl) setPdfUrl(data.pdfUrl);
-          if (data.answersUrl) setAnswersUrl(data.answersUrl);
+          if (data.imageUrl) setAnswersUrl(data.imageUrl);
 
           // Comments
           const commentsData = data.comment || "";
           setComments(Array.isArray(commentsData) ? commentsData : [commentsData]);
+
           if (data.title) setTitle(data.title);
         }
       } catch (err) {
         console.error("Darsni olishda xato:", err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     fetchLessonData();
@@ -136,6 +194,15 @@ export default function MaterialsLevel({ route, navigation }) {
       }
     };
   }, [partTitle, lessonId, paramVideoUrl]);
+
+  /* ------------ Audio controls ------------ */
+  const onPlaybackStatusUpdate = (status) => {
+    if (status.isLoaded) {
+      setPosition(status.positionMillis || 0);
+      setDuration(status.durationMillis || 0);
+      if (status.didJustFinish) setIsPlaying(false);
+    }
+  };
 
   const handleAudioPlayPause = async () => {
     if (!audioUrl) return;
@@ -158,29 +225,21 @@ export default function MaterialsLevel({ route, navigation }) {
     }
   };
 
-  const onPlaybackStatusUpdate = (status) => {
-    if (status.isLoaded) {
-      setPosition(status.positionMillis);
-      setDuration(status.durationMillis);
-      if (status.didJustFinish) setIsPlaying(false);
-    }
-  };
-
   const handleSliderChange = async (value) => {
-    if (soundRef.current) {
-      await soundRef.current.setPositionAsync(value);
-    }
+    if (soundRef.current) await soundRef.current.setPositionAsync(value);
   };
 
-  const formatTime = (ms) => {
+  const formatTime = (ms = 0) => {
     const totalSec = Math.floor(ms / 1000);
     const min = Math.floor(totalSec / 60);
     const sec = totalSec % 60;
     return `${min}:${sec < 10 ? "0" : ""}${sec}`;
   };
 
-  const isDirectVideo = videoUrl && !videoUrl.startsWith("https://www.youtube.com");
-  const isYoutube = videoUrl && videoUrl.startsWith("https://www.youtube.com");
+  // YouTube xato bo‘lsa — brauzer/ilovada ochish
+  const handleYoutubeError = useCallback(() => {
+    if (ytId) Linking.openURL(`https://youtu.be/${ytId}`);
+  }, [ytId]);
 
   if (loading) {
     return (
@@ -201,13 +260,32 @@ export default function MaterialsLevel({ route, navigation }) {
       </View>
 
       {/* Video */}
-      {isYoutube ? (
-        <View style={styles.videoContainer}>
-          <WebView source={{ uri: videoUrl }} style={styles.webview} allowsFullscreenVideo />
+      {ytId ? (
+        <View style={styles.ytWrap}>
+          <YoutubePlayer
+            height={YT_HEIGHT}
+            videoId={ytId}
+            play={false}
+            webViewProps={{
+              allowsFullscreenVideo: true,
+              javaScriptEnabled: true,
+              domStorageEnabled: true,
+              mediaPlaybackRequiresUserAction: false,
+              thirdPartyCookiesEnabled: true,
+              setSupportMultipleWindows: false,
+              androidLayerType: "hardware",
+            }}
+            onError={handleYoutubeError}
+          />
         </View>
-      ) : isDirectVideo ? (
+      ) : videoUrl ? (
         <View style={styles.videoContainer}>
-          <Video source={{ uri: videoUrl }} style={styles.webview} useNativeControls resizeMode="contain" />
+          <Video
+            source={{ uri: videoUrl }}
+            style={styles.video}
+            useNativeControls
+            resizeMode="contain"
+          />
         </View>
       ) : (
         <View style={styles.noVideo}>
@@ -240,7 +318,7 @@ export default function MaterialsLevel({ route, navigation }) {
         )}
       </View>
 
-      {/* PDF / Answers Buttons */}
+      {/* PDF / Answers */}
       <View style={styles.buttonsContainer}>
         <TouchableOpacity style={styles.actionButton} onPress={() => openPdf(pdfUrl)}>
           <Text style={styles.buttonText}>PDF Book</Text>
@@ -264,6 +342,14 @@ export default function MaterialsLevel({ route, navigation }) {
           <Text style={styles.commentText}>Kommentlar mavjud emas.</Text>
         )}
       </ScrollView>
+
+      {/* Image Viewer */}
+      <ImageViewing
+        images={images}
+        imageIndex={0}
+        visible={imageViewerVisible}
+        onRequestClose={() => setImageViewerVisible(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -281,14 +367,17 @@ const styles = StyleSheet.create({
   },
   backButton: { marginRight: 12 },
   lessonTitle: { fontSize: 20, fontWeight: "700", color: "#0f172a" },
+
+  ytWrap: { margin: 16, borderRadius: 12, overflow: "hidden", backgroundColor: "#000" },
   videoContainer: {
-    height: Dimensions.get("window").width * (9 / 16),
+    height: SCREEN_W * (9 / 16),
     margin: 16,
     borderRadius: 12,
     overflow: "hidden",
     backgroundColor: "#000",
   },
-  webview: { flex: 1 },
+  video: { flex: 1 },
+
   noVideo: {
     height: 220,
     margin: 16,
@@ -298,6 +387,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#fee2e2",
   },
   noVideoText: { color: "#b91c1c", fontSize: 16 },
+
   audioContainer: { marginHorizontal: 16, marginBottom: 12 },
   audioButton: {
     flexDirection: "row",
@@ -307,6 +397,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   audioText: { color: "#fff", marginLeft: 12, fontWeight: "600" },
+
   buttonsContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -321,6 +412,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   buttonText: { color: "#fff", fontWeight: "600" },
+
   commentsContainer: { flex: 1, paddingHorizontal: 16, marginTop: 8 },
   commentsTitle: { fontWeight: "700", fontSize: 16, marginBottom: 8 },
   commentText: { fontSize: 14, marginBottom: 6, color: "#333" },

@@ -9,6 +9,9 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "NODE_VERSION": "20.19.4"
       }
     },
     "preview": {
@@ -16,11 +19,17 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "NODE_VERSION": "20.19.4"
       }
     },
     "production": {
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "NODE_VERSION": "20.19.4"
       }
     }
   },
