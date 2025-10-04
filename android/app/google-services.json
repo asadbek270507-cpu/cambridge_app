@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "586644599616",
+    "firebase_url": "https://cambridge-school-e4a8f-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "cambridge-school-e4a8f",
+    "storage_bucket": "cambridge-school-e4a8f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:586644599616:android:46f9fd886e0f6d07a180a5",
+        "android_client_info": {
+          "package_name": "com.rcsai.cambridgeschool.dev"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAtGqt3Ef-Oh-YOKNR0WUA21CTJlq_ArKU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

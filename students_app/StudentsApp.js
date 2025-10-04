@@ -1,13 +1,19 @@
 // students_app/StudentsApp.js
-import 'react-native-reanimated';
 import React, { useEffect } from 'react';
-import { StatusBar, LogBox, UIManager, Platform, View } from 'react-native';
+import {
+  StatusBar,
+  LogBox,
+  UIManager,
+  Platform,
+  View,
+} from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Provider as PaperProvider, DefaultTheme } from 'react-native-paper';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 
+import * as Notifications from 'expo-notifications';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../firebase';
 import registerForPushNotificationsAsync from '../utils/registerForPushNotificationsAsync';
@@ -36,21 +42,29 @@ import ChatPlace from './screens/ChatPlace';
 import NotificationsListScreen from './screens/NotificationsListScreen';
 import ChatScreen from './screens/ChatScreen';
 
-// 🔊 Har doim tepada ko‘rinadigan mini-player (navigator ustiga qo‘yiladi)
-import GlobalAudioPlayer from '../components/GlobalAudioPlayer';
-
 /* ------------------ Top-level tweaks (warnings/compat) ------------------ */
 LogBox.ignoreLogs([
   'setLayoutAnimationEnabledExperimental is currently a no-op in the New Architecture.',
 ]);
 
-// Eski LayoutAnimation API faqat eski arxitektura uchun yoqiladi:
 if (
   Platform.OS === 'android' &&
   UIManager.setLayoutAnimationEnabledExperimental &&
   !globalThis?.nativeFabricUIManager
 ) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+/** Ensure notification handler is set only once (foreground banners/sounds). */
+if (!globalThis.__cambridgeNotifHandlerSet) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+  globalThis.__cambridgeNotifHandlerSet = true;
 }
 /* ----------------------------------------------------------------------- */
 
@@ -68,13 +82,28 @@ const theme = {
   },
 };
 
+/** Bottom tabs with safe-area aware height so it never sticks to gesture bar. */
 function BottomTabs() {
+  const insets = useSafeAreaInsets();
+  const baseH = 56;
+  const height = baseH + Math.max(insets.bottom, 0);
+  const padBottom = 6 + Math.floor(insets.bottom / 2);
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarActiveTintColor: '#8A0D0D',
-        tabBarStyle: { backgroundColor: '#fff' },
+        tabBarInactiveTintColor: '#94a3b8',
+        tabBarStyle: {
+          backgroundColor: '#fff',
+          height,
+          paddingTop: 6,
+          paddingBottom: padBottom,
+          borderTopColor: '#e5e7eb',
+          borderTopWidth: 0.5,
+          elevation: 10,
+        },
         tabBarIcon: ({ color, size }) => {
           let iconName = 'home';
           if (route.name === 'Home') iconName = 'home';
@@ -93,14 +122,50 @@ function BottomTabs() {
   );
 }
 
-export default function StudentsApp() {
-  // ✅ Foydalanuvchi login bo‘lganda push tokenni olish (screen EMAS!)
+export default function StudentsApp({ navigation }) {
+  // ✅ Register Expo push token after login (student device)
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       if (u) registerForPushNotificationsAsync();
     });
     return unsub;
   }, []);
+
+  // Android notification channel (max importance)
+  useEffect(() => {
+    (async () => {
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'Default',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          sound: 'default',
+          lightColor: '#FF231F7C',
+          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+          bypassDnd: true,
+        });
+      }
+    })();
+  }, []);
+
+  // 🔔 When user taps a notification → open notifications list
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener(() => {
+      try {
+        // If this navigator is a nested screen, ask parent to show this child screen.
+        const parent = navigation?.getParent?.();
+        if (parent?.navigate) {
+          parent.navigate('StudentsApp', { screen: 'NotificationsListScreen' });
+        } else if (navigation?.navigate) {
+          // If it's top-level (rare), navigate directly.
+          navigation.navigate('NotificationsListScreen');
+        }
+      } catch {
+        // ignore
+      }
+    });
+    return () => sub.remove();
+  }, [navigation]);
 
   return (
     <SafeAreaProvider>
@@ -109,19 +174,14 @@ export default function StudentsApp() {
           style={{ flex: 1, backgroundColor: theme.colors.background }}
           edges={['top', 'left', 'right']}
         >
-          {/* Root konteynerni relative qilib, overlay komponentlar uchun zIndex/absolute ishlasin */}
-          <View style={{ flex: 1, position: 'relative' }}>
+          <View style={{ flex: 1 }}>
             <StatusBar barStyle="dark-content" backgroundColor={theme.colors.background} />
 
-            {/* 🔊 Telegram-uslubidagi global mini-player
-                - absolute/top:8 bilan navigator ustida turadi
-                - pointerEvents default (playerning o‘zi bosiladi, qolgan joylar orqali tagidagi UI ishlaydi) */}
-            <GlobalAudioPlayer />
-
+            {/* This is a nested navigator (no NavigationContainer here) */}
             <Stack.Navigator initialRouteName="Main" screenOptions={{ headerShown: false }}>
               <Stack.Screen name="Main" component={BottomTabs} />
 
-              {/* Header kerak bo'lmagan ekranlar */}
+              {/* Header hidden screens */}
               <Stack.Screen name="LoginScreen" component={LoginScreen} />
               <Stack.Screen name="MultiLevel" component={MultiLevelScreen} />
               <Stack.Screen name="ListeningScreen" component={ListeningScreen} />
@@ -139,7 +199,7 @@ export default function StudentsApp() {
               <Stack.Screen name="WritingLevel" component={WritingLevel} />
               <Stack.Screen name="LessonMaterialsScreen" component={LessonMaterialsScreen} />
 
-              {/* Shu ikkitasida header ko'rinsin */}
+              {/* These two show headers */}
               <Stack.Screen
                 name="ChatScreen"
                 component={ChatScreen}

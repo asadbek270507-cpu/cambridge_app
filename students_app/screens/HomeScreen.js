@@ -4,9 +4,9 @@ import {
   View,
   StyleSheet,
   ScrollView,
-  SafeAreaView,
   Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context'; // ✅ Yangi SafeAreaView
 import CustomHeader from '../../components/CustomHeader';
 import NewsCarousel from '../../components/NewsCarousel';
 import CalendarView from '../../components/CalendarView'; // path to'g'ri
@@ -19,7 +19,7 @@ const SECTION_GAP = 16;
 
 export default function HomeScreen() {
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <View style={styles.container}>
         {/* Header — CustomHeader ichida safe-area bo'lsa ham, bu yerda ham xavfsiz */}
         <CustomHeader />

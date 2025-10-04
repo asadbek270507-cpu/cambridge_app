@@ -10,8 +10,9 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import YoutubePlayer from "react-native-youtube-iframe";
-import { Video } from "expo-av";
 import Ionicons from "react-native-vector-icons/Ionicons";
+import { Audio } from 'expo-audio';
+import { Video } from 'expo-video'; 
 
 const SCREEN_W = Dimensions.get("window").width;
 const YT_H = SCREEN_W * (9 / 16);

@@ -16,7 +16,6 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
 import * as MediaLibrary from 'expo-media-library';
 import * as WebBrowser from 'expo-web-browser';
-import { Audio, Video } from 'expo-av';
 import Slider from '@react-native-community/slider';
 
 import {
@@ -29,6 +28,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth, firestore, storage } from '../firebase';
 import avatarPlaceholder from '../assets/avatar-placeholder.jpg';
 import Cambridge_logo from '../assets/Cambridge_logo.png';
+import { Video, Audio } from 'expo-av'; 
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 

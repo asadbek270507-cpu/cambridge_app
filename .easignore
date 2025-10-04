@@ -1,15 +1,15 @@
-# Lokalda tursin, EAS arxiviga kirmasin:
+# Managed workflow: lokal native papkalar arxivga kirmasin
 android/
 ios/
 
-# Og‘ir kataloglar
+# Node/Expo keshlari
 node_modules/
 .expo/
 .expo-shared/
 .expo-cache/
 .expo/web/
 
-# Android keshlar
+# Android keshlari
 android/.gradle/
 android/build/
 
@@ -17,11 +17,15 @@ android/build/
 ios/build/
 ios/Pods/
 
-# Lockfiles: Yarn ishlatyapmiz
-package-lock.json
-npm-shrinkwrap.json
+# Lockfiles: npm ishlatamiz → package-lock.jsonni SAQLAYMIZ
+yarn.lock
+.yarn/
+.pnp.*
 
-# Binaries
-*.msi
-*.exe
-*.bat
+# Qo‘shimcha mayda-chuydalar
+.DS_Store
+.git/
+.github/
+.vscode/
+dist/
+coverage/

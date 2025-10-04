@@ -3,18 +3,28 @@ export default ({ config }) => ({
   expo: {
     name: "Cambridge School",
     slug: "Cambridge_School",
+    owner: "asadbek270507",
+
+    // JS entry
+    entryPoint: "./index.js",
+
     platforms: ["ios", "android"],
     scheme: "cambridge-school",
     version: "1.0.0",
+    runtimeVersion: config.version,
+
     orientation: "portrait",
     icon: "./assets/Cambridge_logo.png",
     userInterfaceStyle: "light",
-    newArchEnabled: true,
+
+    newArchEnabled: false,
+
     splash: {
       image: "./assets/Cambridge_logo.png",
       resizeMode: "contain",
       backgroundColor: "#ffffff",
     },
+
     notification: { color: "#1565C0" },
 
     ios: {
@@ -31,14 +41,13 @@ export default ({ config }) => ({
         ITSAppUsesNonExemptEncryption: false,
         UIBackgroundModes: ["audio"],
       },
-      runtimeVersion: { policy: "appVersion" },
     },
 
     android: {
-      newArchEnabled: true,
       package: "com.rcsai.cambridgeschool.dev",
-      // EAS file env'dan olamiz (GOOGLE_SERVICES_JSON ni env sifatida yaratgansiz)
-      googleServicesFile: process.env.GOOGLE_SERVICES_JSON,
+      // EAS buildda FILE ENV; lokalda esa fayl ishlaydi:
+      googleServicesFile:
+        process.env.GOOGLE_SERVICES_JSON ?? "./android/app/google-services.json",
       jsEngine: "hermes",
       softwareKeyboardLayoutMode: "pan",
       adaptiveIcon: {
@@ -58,25 +67,21 @@ export default ({ config }) => ({
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.BLUETOOTH",
-        "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
         "android.permission.MODIFY_AUDIO_SETTINGS",
       ],
-      runtimeVersion: "1.0.0",
     },
 
     extra: {
+      // 🔗 EAS project: @asadbek270507/Cambridge_School
       eas: { projectId: "4abff30e-a432-4baf-a029-6130ac2b4c35" },
     },
 
     plugins: [
       "expo-system-ui",
-      [
-        "expo-notifications",
-        { icon: "./assets/Cambridge_logo.png", color: "#1565C0" },
-      ],
+      ["expo-notifications", { icon: "./assets/Cambridge_logo.png", color: "#1565C0" }],
       [
         "expo-image-picker",
         {
@@ -85,13 +90,26 @@ export default ({ config }) => ({
         },
       ],
       "expo-media-library",
-      "expo-av",
+      "expo-audio",
+      "expo-video",
       [
         "expo-build-properties",
-        { android: { usesCleartextTraffic: true } },
+        {
+          android: {
+            // EAS log’iga mos: SDK 36 toolchain
+            minSdkVersion: 24,
+            compileSdkVersion: 36,
+            targetSdkVersion: 36,
+            buildToolsVersion: "36.0.0",
+            // ✅ KSP mos Kotlin
+            kotlinVersion: "2.1.20",
+            usesCleartextTraffic: true,
+          },
+          ios: {},
+        },
       ],
-      // expo install sizga qo‘shishni aytgan plugin:
       "expo-web-browser",
+      // RN Track Player uchun alohida plugin shart emas (autolinking)
     ],
 
     updates: {},

@@ -1,14 +1,21 @@
+# Dependencies
 node_modules/
+
+# Expo
 .expo/
 .expo-shared/
 .expo-cache/
 .expo/web/
+
+# Android build files
 android/.gradle/
 android/build/
+
+# iOS build files
 ios/build/
 ios/Pods/
 
-# Lockfiles: Yarn ishlatiladi -> package-lock/shrinkwrap kirmasin
+# Lockfiles (Yarn ishlatiladi, npm lockfile kirmasin)
 package-lock.json
 npm-shrinkwrap.json
 
@@ -18,11 +25,23 @@ npm-shrinkwrap.json
 *.bat
 *.ps1
 
+# Build artifacts
 dist/
 build/
 .cache/
 
-package-lock.json
+# Environment / credentials
+.env
+serviceAccount.json
+*.pem
+
+# Misc
+*.log
+.DS_Store
+
+# JSON fayllar ichidan faqat app.config.json kiritiladi
 *.json
 !app.config.json
-node.exe 
+
+# Node exe (Windows uchun)
+node.exe
