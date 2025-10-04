@@ -8,7 +8,7 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "postinstall": "patch-package",
+    "postinstall": "if [ -x node_modules/.bin/patch-package ]; then patch-package; else echo 'patch-package not installed (dev deps omitted). Skipping patches.'; fi",
     "web": "expo start --web"
   },
   "dependencies": {
@@ -52,6 +52,7 @@
     "expo-video-thumbnails": "~10.0.7",
     "expo-web-browser": "~15.0.8",
     "firebase": "12.3.0",
+    "patch-package": "^8.0.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.4",
@@ -81,7 +82,6 @@
     "@babel/core": "^7.20.0",
     "@types/react": "~19.1.10",
     "babel-preset-expo": "^54.0.3",
-    "patch-package": "^8.0.1",
     "typescript": "~5.9.2"
   },
   "engines": {
