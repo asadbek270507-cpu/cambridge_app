@@ -45,7 +45,7 @@ export default ({ config }) => ({
 
     android: {
       package: "com.rcsai.cambridgeschool.dev",
-      // EAS buildda FILE ENV; lokalda esa fayl ishlaydi:
+      // EAS build’da FILE ENV; lokalda esa fayl ishlaydi:
       googleServicesFile:
         process.env.GOOGLE_SERVICES_JSON ?? "./android/app/google-services.json",
       jsEngine: "hermes",
@@ -96,22 +96,23 @@ export default ({ config }) => ({
         "expo-build-properties",
         {
           android: {
-            // EAS log’iga mos: SDK 36 toolchain
+            // SDK 36 toolchain
             minSdkVersion: 24,
             compileSdkVersion: 36,
             targetSdkVersion: 36,
             buildToolsVersion: "36.0.0",
-            // ✅ KSP mos Kotlin
+            // KSP mos Kotlin
             kotlinVersion: "2.1.20",
             usesCleartextTraffic: true,
           },
           ios: {},
         },
       ],
-      "expo-web-browser",
-      // RN Track Player uchun alohida plugin shart emas (autolinking)
+      // ❌ "expo-web-browser" NI OLIB TASHLADIK — u config plugin emas
     ],
 
-    updates: {},
+    updates: {
+      url: "https://u.expo.dev/4abff30e-a432-4baf-a029-6130ac2b4c35",
+    },
   },
 });
