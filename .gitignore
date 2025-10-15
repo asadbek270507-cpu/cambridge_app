@@ -23,3 +23,5 @@ build/
 .cache/
 
 package-lock.json
+*.json
+!app.config.json
