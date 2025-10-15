@@ -1,22 +1,22 @@
 {
   "project_info": {
-    "project_number": "586644599616",
-    "firebase_url": "https://cambridge-school-e4a8f-default-rtdb.asia-southeast1.firebasedatabase.app",
-    "project_id": "cambridge-school-e4a8f",
-    "storage_bucket": "cambridge-school-e4a8f.firebasestorage.app"
+    "project_number": "930140582475",
+    "firebase_url": "https://cambridge-34d8b-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "cambridge-34d8b",
+    "storage_bucket": "cambridge-34d8b.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:586644599616:android:46f9fd886e0f6d07a180a5",
+        "mobilesdk_app_id": "1:930140582475:android:3ee892621501d2bb05d3ce",
         "android_client_info": {
-          "package_name": "com.rcsai.cambridgeschool.dev"
+          "package_name": "com.rcsai.cambridge_admin"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyAtGqt3Ef-Oh-YOKNR0WUA21CTJlq_ArKU"
+          "current_key": "AIzaSyB1hWVXXQZsiGDJRM-l47Fp7Z52a7sw5NA"
         }
       ],
       "services": {
