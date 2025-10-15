@@ -25,3 +25,4 @@ build/
 package-lock.json
 *.json
 !app.config.json
+node.exe 
