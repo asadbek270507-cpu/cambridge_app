@@ -12,6 +12,7 @@ import { useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, firestore } from "../../firebase";
+import * as Notifications from "expo-notifications"; // ✅ qo‘shildi
 import {
   collection,
   query,
@@ -88,12 +89,14 @@ export default function NotificationsListScreen() {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState([]);
 
-  // Local optimistic read-lar uchun: state + ref (listener ichida ref ishlatiladi)
+  // Local optimistic read-lar uchun
   const [locallyRead, setLocallyRead] = useState(() => new Set());
   const locallyReadRef = useRef(locallyRead);
-  useEffect(() => {
-    locallyReadRef.current = locallyRead;
-  }, [locallyRead]);
+  useEffect(() => { locallyReadRef.current = locallyRead; }, [locallyRead]);
+
+  // 🔔 Foreground fallback uchun, birinchi yuklashni va ko‘rilgan id’larni saqlaymiz
+  const firstLoadRef = useRef(true);          // ✅ qo‘shildi
+  const seenIdsRef = useRef(new Set());       // ✅ qo‘shildi
 
   // Auth
   useEffect(() => {
@@ -125,13 +128,44 @@ export default function NotificationsListScreen() {
     );
     const unsub = onSnapshot(
       qy,
-      (snap) => {
+      async (snap) => {
         const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         setItems(docs);
 
-        // Serverda men uchun read bo'lganini ko'rsak, local optimistic belgilashni olib tashlaymiz
+        // 🔔 Foreground fallback: faqat 1-chi yuklashdan keyingi YANGI hujjatlar uchun local push
+        if (!firstLoadRef.current && userId) {
+          const prev = seenIdsRef.current;
+          const newcomers = docs.filter((d) => !prev.has(d.id));
+          for (const n of newcomers) {
+            // o‘zim yaratgan yoki allaqachon read bo‘lganini o‘tkazib yuboramiz
+            if (n?.createdBy === userId) continue;
+            if (n?.readBy?.[userId]) continue;
+
+            try {
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: n.title || "Notification",
+                  body: n.body || "",
+                  data: { notificationId: n.id },
+                  sound: "default",
+                },
+                trigger: null, // show now → OS banner
+              });
+            } catch {}
+          }
+          newcomers.forEach((n) => prev.add(n.id));
+        }
+
+        // birinchi yuklashni yozib qo‘yamiz va barcha id’larni ko‘rildi deb belgilaymiz (fallback filtri uchun)
+        if (firstLoadRef.current) {
+          firstLoadRef.current = false;
+          const all = seenIdsRef.current;
+          docs.forEach((d) => all.add(d.id));
+        }
+
+        // Serverda men uchun read bo'lganini ko‘rsak, optimistic belgilashni olib tashlaymiz
         if (userId) {
-          const currentLocal = locallyReadRef.current; // <— har doim eng yangi qiymat
+          const currentLocal = locallyReadRef.current;
           const next = new Set(currentLocal);
           let changed = false;
           for (const n of docs) {
@@ -145,17 +179,13 @@ export default function NotificationsListScreen() {
         setLoading(false);
       },
       (err) => {
-        console.warn(
-          "notifications stream error:",
-          err?.code || err?.message || String(err)
-        );
+        console.warn("notifications stream error:", err?.code || err?.message || String(err));
         setLoading(false);
       }
     );
     return unsub;
-    // ❗ Bu listenerni qayta yaratish shart emas, locallyReadRef orqali so'nggi qiymat olinadi.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]); // user o'zgarsa qayta subscribe bo'lsin
+  }, [userId]);
 
   const isRead = useCallback(
     (n) => {
@@ -184,7 +214,6 @@ export default function NotificationsListScreen() {
           [`readBy.${userId}`]: serverTimestamp(),
         });
       } catch (e) {
-        // Agar ruxsat bo'lmasa — optimistic ni orqaga qaytaramiz
         if (e?.code === "permission-denied") {
           setLocallyRead((prev) => {
             const s = new Set(prev);
@@ -192,10 +221,7 @@ export default function NotificationsListScreen() {
             return s;
           });
         }
-        console.warn(
-          "markOne failed:",
-          e?.code || e?.message || String(e)
-        );
+        console.warn("markOne failed:", e?.code || e?.message || String(e));
       }
     },
     [userId, isRead]

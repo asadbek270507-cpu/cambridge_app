@@ -13,9 +13,11 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio, Video } from 'expo-av';
 import Slider from '@react-native-community/slider';
+
 import {
-  collection, addDoc, query, orderBy, onSnapshot, serverTimestamp,
-  doc, updateDoc, deleteDoc, getDoc, setDoc, getDocs, limit
+  collection, query, orderBy, onSnapshot, serverTimestamp,
+  doc, updateDoc, deleteDoc, getDoc, setDoc, getDocs, limit, arrayUnion,
+  writeBatch, limitToLast
 } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -30,9 +32,7 @@ import { auth, firestore, storage } from '../../firebase';
 import avatarPlaceholder from '../../assets/avatar-placeholder.jpg';
 import Cambridge_logo from '../../assets/Cambridge_logo.png';
 
-// ---- GLOBAL for audio singleton (one tile plays at a time)
 let GLOBAL_ACTIVE_SOUND = { id: null, sound: null };
-
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
 /* ----------------- Helpers: open & save ----------------- */
@@ -46,7 +46,7 @@ async function openWithChooser(remoteUrl, mimeType) {
     }
     const can = await Linking.canOpenURL(remoteUrl);
     if (can) { await Linking.openURL(remoteUrl); return true; }
-  } catch (_) {}
+  } catch {}
   return false;
 }
 async function saveToDevice(remoteUrl, displayName='file', mimeType) {
@@ -58,10 +58,17 @@ async function saveToDevice(remoteUrl, displayName='file', mimeType) {
     const isMedia = /^(image|video|audio)\//.test(mimeType||'');
     if (isMedia) {
       const perm = await MediaLibrary.requestPermissionsAsync();
-      if (perm.status === 'granted') { await MediaLibrary.saveToLibraryAsync(uri); Alert.alert('Saved','Fayl galereyaga saqlandi.'); return true; }
+      if (perm.status === 'granted') {
+        await MediaLibrary.saveToLibraryAsync(uri);
+        Alert.alert('Saved','Fayl galereyaga saqlandi.');
+        return true;
+      }
     }
-    if (await Sharing.isAvailableAsync()) { await Sharing.shareAsync(uri, { mimeType, dialogTitle: 'Save to device' }); return true; }
-  } catch (_) {}
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(uri, { mimeType, dialogTitle: 'Save to device' });
+      return true;
+    }
+  } catch {}
   return false;
 }
 async function openPdfSmart(url) {
@@ -69,13 +76,13 @@ async function openPdfSmart(url) {
   try {
     const viewer = `https://drive.google.com/viewerng/viewer?embedded=true&url=${encodeURIComponent(url)}`;
     await WebBrowser.openBrowserAsync(viewer); return true;
-  } catch (_) {}
+  } catch {}
   return false;
 }
 const ext = (n='') => (n.split('.').pop()||'').toLowerCase();
 const isPdf = (name, mime) => (mime||'').includes('application/pdf') || ext(name)==='pdf';
 
-/* ---------- NEW: name helpers for DM header ---------- */
+/* ---------- Name helpers ---------- */
 const humanizeEmail = (email='') => {
   const base = (email.split('@')[0] || '').replace(/[._-]+/g, ' ').trim();
   return base ? base.replace(/\b\w/g, c => c.toUpperCase()) : email;
@@ -84,22 +91,19 @@ async function getUserDisplayName(uid) {
   try {
     const snap = await getDoc(doc(firestore, 'users', uid));
     const u = snap.data() || {};
-    const name =
-      u.displayName ||
-      u.fullName ||
-      u.name ||
-      [u.firstName, u.lastName].filter(Boolean).join(' ') ||
-      null;
+    const name = u.displayName || u.fullName || u.name || [u.firstName, u.lastName].filter(Boolean).join(' ') || null;
     if (name && String(name).trim()) return String(name).trim();
     if (u.email) return humanizeEmail(u.email);
   } catch {}
   return 'Direct chat';
 }
+
 /* ============================================================ */
 
 export default function ChatScreen({ route }) {
   const groupId = route?.params?.groupId ?? null;
   const dmId    = route?.params?.dmId ?? null;
+  const peerId  = route?.params?.peerId ?? null;
   const initialGroupName = route?.params?.groupName ?? (dmId ? 'Direct chat' : 'Chat');
 
   const headerHeight = useHeaderHeight();
@@ -113,7 +117,7 @@ export default function ChatScreen({ route }) {
     setAuthReady(true);
   }), []);
 
-  // ---- Configure audio mode ONCE (correct key: interruptionModeIOS)
+  // ---- Audio mode once
   useEffect(() => {
     (async () => {
       try {
@@ -126,15 +130,13 @@ export default function ChatScreen({ route }) {
           shouldDuckAndroid: true,
           playThroughEarpieceAndroid: false,
         });
-      } catch (e) {
-        console.warn('Audio mode set error', e);
-      }
+      } catch {}
     })();
   }, []);
 
   /* -------- Presence (global + per-group) -------- */
   const hb = useRef(null);
-  const ghb = useRef(null); // group heartbeat
+  const ghb = useRef(null);
 
   const setGlobalPresence = useCallback(async (isOnline) => {
     if (!currentUserId) return;
@@ -224,34 +226,46 @@ export default function ChatScreen({ route }) {
 
   const [permError, setPermError] = useState(null);
 
+  // ---- Ensure DM participants / Group info
   useEffect(() => {
     if (!authReady || !currentUserId) return;
 
-    // -------- DM HEADER: use profile name (fallback to humanized email)
-    if (dmId && !groupId) {
-      (async () => {
+    // DM header + ensure doc
+    (async () => {
+      if (dmId && !groupId) {
         try {
-          const dmSnap = await getDoc(doc(firestore, 'private_chats', dmId));
-          const dm = dmSnap.data() || {};
-          const otherId = (dm.participants || []).find((x) => x !== currentUserId);
-          if (otherId) {
-            const nm = await getUserDisplayName(otherId);
-            setTitle(nm);
-          } else setTitle('Direct chat');
-        } catch { setTitle('Direct chat'); }
-      })();
-      return;
-    }
+          const dRef = doc(firestore, 'private_chats', dmId);
+          const dmSnap = await getDoc(dRef);
+          if (dmSnap.exists()) {
+            const dm = dmSnap.data() || {};
+            const otherId = (dm.participants || []).find((x) => x !== currentUserId);
+            setTitle(otherId ? await getUserDisplayName(otherId) : 'Direct chat');
+          } else {
+            const other = peerId || null;
+            const parts = other ? [currentUserId, other] : [currentUserId];
+            await setDoc(dRef, { participants: parts, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+            if (other) setTitle(await getUserDisplayName(other));
+          }
+        } catch {
+          setTitle('Direct chat');
+        }
+      }
+    })();
 
     if (!groupId) return;
     const gRef = doc(firestore, 'groups', groupId);
     const unsub = onSnapshot(
       gRef,
-      (snap) => {
+      async (snap) => {
         if (snap.exists()) {
           const g = snap.data();
           if (g?.name) setTitle(g.name);
           if (g?.createdBy === currentUserId) setCanManage(true);
+
+          const ids = Array.isArray(g.memberIds) ? g.memberIds : [];
+          if (ids.length && !ids.includes(currentUserId)) {
+            try { await updateDoc(gRef, { memberIds: arrayUnion(currentUserId) }); } catch {}
+          }
         }
       },
       (err) => setPermError(err.message)
@@ -265,7 +279,7 @@ export default function ChatScreen({ route }) {
     })();
 
     return () => unsub();
-  }, [authReady, groupId, dmId, currentUserId]);
+  }, [authReady, groupId, dmId, currentUserId, peerId]);
 
   useEffect(() => {
     if (!authReady || !currentUserId || !groupId) return;
@@ -311,28 +325,71 @@ export default function ChatScreen({ route }) {
     }
   }, [groupId, currentUserId, memberIds]);
 
-  /* -------- Messages -------- */
+  /* -------- Messages (REALTIME & INSTANT) -------- */
   const [messages, setMessages] = useState([]);
   const [loadingMsgs, setLoadingMsgs] = useState(true);
   const flatListRef = useRef(null);
   const prevLenRef = useRef(0);
+  const msgsMapRef = useRef(new Map()); // id -> msg
+
+  const MSG_LIMIT = 300;
+  const msgPath = useMemo(() => (
+    groupId ? `group_chats/${groupId}/messages` :
+    dmId    ? `private_chats/${dmId}/messages` :
+              `chats`
+  ), [groupId, dmId]);
+
+  const clearMessagesStore = () => { msgsMapRef.current = new Map(); setMessages([]); };
 
   useEffect(() => {
     if (!authReady || !currentUserId) return;
     setLoadingMsgs(true); setPermError(null);
+    clearMessagesStore();
 
-    let qRef;
-    if (groupId) qRef = query(collection(firestore, `group_chats/${groupId}/messages`), orderBy('createdAt', 'asc'));
-    else if (dmId) qRef = query(collection(firestore, `private_chats/${dmId}/messages`), orderBy('createdAt', 'asc'));
-    else qRef = query(collection(firestore, 'chats'), orderBy('timestamp', 'asc'));
+    // 🔑 MUHIM: createdAtMs bo‘yicha (client clock) — zudlik bilan ko‘rinadi
+    const qRef = query(
+      collection(firestore, msgPath),
+      orderBy('createdAtMs', 'asc'),
+      limitToLast(MSG_LIMIT)
+    );
 
     const unsub = onSnapshot(
       qRef,
-      (s) => { setMessages(s.docs.map((d) => ({ id: d.id, ...d.data() }))); setLoadingMsgs(false); },
+      { includeMetadataChanges: true }, // RN stream o'zgarishlarida ham yangilaydi
+      (snap) => {
+        const map = msgsMapRef.current;
+
+        snap.docChanges().forEach((ch) => {
+          const id = ch.doc.id;
+          if (ch.type === 'removed') {
+            map.delete(id);
+            return;
+          }
+          const data = ch.doc.data({ serverTimestamps: 'estimate' });
+          const createdAtMs =
+            typeof data?.createdAtMs === 'number'
+              ? data.createdAtMs
+              : (data?.createdAt?.toMillis?.() ?? 0);
+
+          map.set(id, { id, ...data, createdAtMs });
+        });
+
+        // ASC (eski -> yangi). Tie-break id bilan.
+        const next = Array.from(map.values()).sort((a,b) => {
+          const am = a.createdAtMs ?? 0;
+          const bm = b.createdAtMs ?? 0;
+          if (am !== bm) return am - bm;
+          return a.id.localeCompare(b.id);
+        });
+
+        setMessages(next);
+        setLoadingMsgs(false);
+      },
       (err) => { setPermError(err.message); setLoadingMsgs(false); }
     );
-    return () => unsub();
-  }, [authReady, groupId, dmId, currentUserId]);
+
+    return () => { unsub && unsub(); clearMessagesStore(); };
+  }, [authReady, msgPath, currentUserId]);
 
   useEffect(() => {
     if (messages.length > prevLenRef.current) {
@@ -415,6 +472,23 @@ export default function ChatScreen({ route }) {
   const [editingId, setEditingId] = useState(null);
   const [replyTarget, setReplyTarget] = useState(null);
 
+  const safeEditMessage = async (patch) => {
+    if (!editingId) return;
+    const refPath =
+      groupId ? doc(firestore, `group_chats/${groupId}/messages`, editingId)
+      : dmId   ? doc(firestore, `private_chats/${dmId}/messages`, editingId)
+               : doc(firestore, 'chats', editingId);
+
+    const exists = await getDoc(refPath);
+    if (!exists.exists()) {
+      setEditingId(null);
+      Alert.alert('Diqqat', 'Xabar allaqachon o‘chirilgan yoki mavjud emas.');
+      return;
+    }
+    await updateDoc(refPath, patch);
+    setEditingId(null);
+  };
+
   const sendMessage = async (content, type='text', name=null, meta=null) => {
     if (!currentUserId) return Alert.alert('Xato', 'Foydalanuvchi aniqlanmadi.');
     if (type === 'text' && !editingId && !content?.trim()) return;
@@ -427,53 +501,92 @@ export default function ChatScreen({ route }) {
       else if (replyTarget.type === 'video') safe = '🎬 Video';
       else if (replyTarget.type === 'audio') safe = `🎵 Audio: ${replyTarget.name || ''}`.trim();
       else safe = `📎 File: ${replyTarget.name || ''}`.trim();
-      replyTo = { id: replyTarget.id, text: safe, senderName: replyTarget.senderName || '' };
+      replyTo = {
+        id: replyTarget.id,
+        senderId: replyTarget.senderId || null,
+        text: safe,
+        senderName: replyTarget.senderName || ''
+      };
     }
 
     const us = await getDoc(doc(firestore, 'users', currentUserId));
     const u = us.data() || {};
+    const prettyName =
+      (u.displayName && String(u.displayName).trim()) ||
+      (u.fullName && String(u.fullName).trim()) ||
+      (u.name && String(u.name).trim()) ||
+      (u.email ? humanizeEmail(u.email) : null) ||
+      'Member';
+
+    const nowMs = Date.now();
     const payload = {
-      text: content || '', senderId: currentUserId, senderName: u.displayName || 'User',
-      avatar: u.avatar || null, type, name: name || null,
-      size: meta?.size ?? null, mimeType: meta?.mimeType ?? null,
-      replyTo, createdAt: serverTimestamp(), timestamp: serverTimestamp(),
+      text: content || '',
+      senderId: currentUserId,
+      senderName: prettyName,
+      avatar: u.avatar || null,
+      type,
+      name: name || null,
+      size: meta?.size ?? null,
+      mimeType: meta?.mimeType ?? null,
+      replyTo,
+      createdAtMs: nowMs,            // 🔑 tartib shu bilan
+      createdAt: serverTimestamp(),  // UI ko'rsatish uchun
+      timestamp: serverTimestamp(),  // legacy
     };
 
-    if (editingId) {
-      await updateDoc(
-        groupId ? doc(firestore, `group_chats/${groupId}/messages`, editingId)
-        : dmId   ? doc(firestore, `private_chats/${dmId}/messages`, editingId)
-                 : doc(firestore, 'chats', editingId),
-        { text: content, type, name, size: payload.size, mimeType: payload.mimeType }
-      );
-      setEditingId(null);
-    } else {
-      const coll = groupId
-        ? collection(firestore, `group_chats/${groupId}/messages`)
-        : dmId
-        ? collection(firestore, `private_chats/${dmId}/messages`)
-        : collection(firestore, 'chats');
+    try {
+      if (editingId) {
+        await safeEditMessage({ text: content, type, name, size: payload.size, mimeType: payload.mimeType });
+      } else {
+        const batch = writeBatch(firestore);
+        const coll =
+          groupId ? collection(firestore, `group_chats/${groupId}/messages`) :
+          dmId    ? collection(firestore, `private_chats/${dmId}/messages`) :
+                    collection(firestore, 'chats');
 
-      await addDoc(coll, payload);
+        const newMsgRef = doc(coll);
+        batch.set(newMsgRef, payload);
 
-      const lastText = type === 'text' ? payload.text
-        : type === 'image' ? '🖼️ Image'
-        : type === 'video' ? '🎬 Video'
-        : type === 'audio' ? '🎵 Audio'
-        : '📎 File';
+        const lastText = type === 'text' ? payload.text
+          : type === 'image' ? '🖼️ Image'
+          : type === 'video' ? '🎬 Video'
+          : type === 'audio' ? '🎵 Audio'
+          : '📎 File';
 
-      if (groupId) {
-        await updateDoc(doc(firestore, 'groups', groupId), { lastMessage: lastText, lastMessageAt: serverTimestamp() }).catch(()=>{});
+        if (groupId) {
+          batch.update(doc(firestore, 'groups', groupId), {
+            lastMessage: lastText, lastMessageAt: serverTimestamp()
+          });
+        } else if (dmId) {
+          batch.set(doc(firestore, 'private_chats', dmId), {
+            lastMessage: lastText, lastSender: currentUserId, updatedAt: serverTimestamp()
+          }, { merge: true });
+        }
+        await batch.commit();
+
         await setGroupPresence(true);
-      } else if (dmId) {
-        await setDoc(doc(firestore, 'private_chats', dmId), { lastMessage: lastText, lastSender: currentUserId, updatedAt: serverTimestamp() }, { merge: true }).catch(()=>{});
+        await setGlobalPresence(true);
       }
-      await setGlobalPresence(true);
-    }
 
-    setInputText(''); setReplyTarget(null);
-    requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated: true }));
+      setInputText('');
+      setReplyTarget(null);
+      requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated: true }));
+    } catch (e) {
+      const msg = String(e?.message || e);
+      if (/Missing or insufficient permissions/i.test(msg)) {
+        Alert.alert('Diqqat','Group chat ga yozish ruxsati yo‘q. Guruhning memberIds ro‘yxatida bo‘lishingiz kerak.');
+      } else {
+        Alert.alert('Xato', msg);
+      }
+    }
   };
+
+  const handleSend = useCallback(() => {
+    const txt = inputText;
+    if (!txt.trim() && !editingId) return;
+    setInputText('');
+    sendMessage(txt);
+  }, [inputText, editingId]);
 
   const handleDelete = (id) => {
     Alert.alert('O‘chirish', 'Xabarni o‘chirishni tasdiqlang', [
@@ -481,12 +594,20 @@ export default function ChatScreen({ route }) {
       { text: 'Ha', style: 'destructive', onPress: async () =>
         await deleteDoc(groupId ? doc(firestore, `group_chats/${groupId}/messages`, id)
           : dmId ? doc(firestore, `private_chats/${dmId}/messages`, id)
-                 : doc(firestore, 'chats', id))
+                 : doc(firestore, 'chats', id)).catch((e)=>Alert.alert('Xato', String(e?.message||e)))
       },
     ]);
   };
-  const handleEdit  = (msg) => { if (msg.type!=='text') return Alert.alert('Edit','Faqat matn xabarlarini tahrirlash mumkin.'); setInputText(msg.text); setReplyTarget(null); setEditingId(msg.id); };
-  const handleReply = (msg) => { setEditingId(null); setReplyTarget({ id: msg.id, text: msg.text, senderName: msg.senderName, type: msg.type, name: msg.name }); };
+  const handleEdit  = (msg) => {
+    if (msg.type!=='text') return Alert.alert('Edit','Faqat matn xabarlarini tahrirlash mumkin.');
+    setInputText(msg.text);
+    setReplyTarget(null);
+    setEditingId(msg.id);
+  };
+  const handleReply = (msg) => {
+    setEditingId(null);
+    setReplyTarget({ id: msg.id, senderId: msg.senderId, text: msg.text, senderName: msg.senderName, type: msg.type, name: msg.name });
+  };
 
   /* -------- UI helpers -------- */
   const fmt = (ts) => { if (!ts?.toDate) return ''; const d = ts.toDate(); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
@@ -511,13 +632,13 @@ export default function ChatScreen({ route }) {
 
         <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
           <View style={styles.topRow}>
-            <Text style={[styles.sender, isMe ? styles.senderMe : styles.senderOther]}>{isMe ? 'Siz' : item.senderName}</Text>
+            <Text style={[styles.sender, isMe ? styles.senderMe : styles.senderOther]}>{isMe ? 'Siz' : (item.senderName || 'Member')}</Text>
             <Text style={[styles.time, isMe?{color:'#E5E7EB'}:{color:'#9CA3AF'}]}>{fmt(item.createdAt || item.timestamp)}</Text>
           </View>
 
           {!!item.replyTo && (
             <View style={styles.replyBox}>
-              <Text style={styles.replySender}>{item.replyTo.senderName}</Text>
+              <Text style={styles.replySender}>{item.replyTo.senderName || 'Reply'}</Text>
               <Text style={styles.replyText} numberOfLines={2}>{item.replyTo.text}</Text>
             </View>
           )}
@@ -535,23 +656,11 @@ export default function ChatScreen({ route }) {
           )}
 
           {isAudioMsg(item) && (
-            <ChatAudioTile
-              id={item.id}
-              name={item.name || 'Audio'}
-              url={item.text}
-              size={item.size}
-              isMe={isMe}
-            />
+            <ChatAudioTile id={item.id} name={item.name || 'Audio'} url={item.text} size={item.size} isMe={isMe} />
           )}
 
           {!isAudioMsg(item) && item.type==='file' && (
-            <FileTile
-              name={item.name||'File'}
-              url={item.text}
-              size={item.size}
-              mimeType={item.mimeType}
-              isMe={isMe}
-            />
+            <FileTile name={item.name||'File'} url={item.text} size={item.size} mimeType={item.mimeType} isMe={isMe} />
           )}
 
           <View style={styles.actionRow}>
@@ -654,14 +763,14 @@ export default function ChatScreen({ route }) {
               keyExtractor={(item)=>String(item.id)}
               contentContainerStyle={{ paddingHorizontal:10, paddingTop:10, paddingBottom:12+insets.bottom }}
               onScroll={onListScroll}
-              scrollEventThrottle={16}
+              scrollEventThrottle={32}
               keyboardShouldPersistTaps="always"
-              keyboardDismissMode={Platform.OS==='ios' ? 'interactive' : 'on-drag'}
+              keyboardDismissMode={Platform.OS==='ios' ? 'interactive' : 'on-drag' }
               ListEmptyComponent={<View style={{ padding:20, alignItems:'center' }}><Text>Hali xabar yo‘q. Birinchi xabarni yozing.</Text></View>}
-              removeClippedSubviews
-              initialNumToRender={16}
-              windowSize={10}
-              maxToRenderPerBatch={12}
+              removeClippedSubviews={false}  // 🔑 important: RN rendering/glitches oldini oladi
+              initialNumToRender={18}
+              windowSize={12}
+              maxToRenderPerBatch={14}
             />
           )}
 
@@ -703,10 +812,10 @@ export default function ChatScreen({ route }) {
               placeholderTextColor="#9CA3AF"
               onFocus={scrollToBottom}
               returnKeyType="send"
-              onSubmitEditing={() => sendMessage(inputText)}
+              onSubmitEditing={handleSend}
             />
 
-            <TouchableOpacity onPress={() => sendMessage(inputText)} style={styles.sendButton}>
+            <TouchableOpacity onPress={handleSend} style={styles.sendButton}>
               <MaterialCommunityIcons name="send" size={20} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -831,8 +940,13 @@ export default function ChatScreen({ route }) {
                           name: item.displayName || item.fullName || item.email || 'User',
                           addedBy: currentUserId, isAdmin:false, joinedAt: serverTimestamp(), lastActive: serverTimestamp(), online: false,
                         }, { merge: true });
+                        await updateDoc(doc(firestore, 'groups', groupId), {
+                          memberIds: arrayUnion(item.id)
+                        });
                         setCandidates(prev => prev.filter(x => x.id !== item.id));
-                      } catch { Alert.alert('Xato','Qo‘shib bo‘lmadi.'); }
+                      } catch {
+                        Alert.alert('Xato','Qo‘shib bo‘lmadi (permissions).');
+                      }
                     }}>
                       <Text style={styles.addBtnTx}>Add</Text>
                     </TouchableOpacity>
@@ -911,11 +1025,14 @@ function FileTile({ name, url, size=null, mimeType=null, local=false, isMe=false
 function ChatAudioTile({ id, name, url, size=null, isMe=false }) {
   const [sound, setSound] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [position, setPosition] = useState(0); // ms
-  const [duration, setDuration] = useState(0); // ms
+  const [position, setPosition] = useState(0);
+  const [duration, setDuration] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  // cleanup on unmount
+  const [sliderValue, setSliderValue] = useState(0);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const scrubbingRef = useRef(false);
+
   useEffect(() => {
     return () => {
       (async () => {
@@ -935,16 +1052,21 @@ function ChatAudioTile({ id, name, url, size=null, isMe=false }) {
     setLoading(true);
     const s = new Audio.Sound();
     try {
-      await s.loadAsync({ uri: url }, { shouldPlay: false, progressUpdateIntervalMillis: 500 }, false);
+      await s.loadAsync({ uri: url }, { shouldPlay: false, progressUpdateIntervalMillis: 400 }, false);
       s.setOnPlaybackStatusUpdate((st) => {
         if (!st) return;
-        if ('positionMillis' in st) setPosition(st.positionMillis || 0);
+        if ('positionMillis' in st) {
+          const posMs = st.positionMillis || 0;
+          setPosition(posMs);
+          if (!scrubbingRef.current) setSliderValue(Math.floor(posMs / 1000));
+        }
         if ('durationMillis' in st && st.durationMillis) setDuration(st.durationMillis);
         if (st.isLoaded) {
           setIsPlaying(!!st.isPlaying);
           if (st.didJustFinish) {
             setIsPlaying(false);
             setPosition(0);
+            if (!scrubbingRef.current) setSliderValue(0);
           }
         }
       });
@@ -998,13 +1120,7 @@ function ChatAudioTile({ id, name, url, size=null, isMe=false }) {
 
   const durationSec = Math.max(1, Math.floor((duration || 0) / 1000));
   const positionSec = Math.floor((position || 0) / 1000);
-
-  const fmt = (ms) => {
-    const total = Math.floor((ms || 0) / 1000);
-    const m = Math.floor(total / 60);
-    const s = total % 60;
-    return `${String(m).padStart(1, '0')}:${String(s).padStart(2, '0')}`;
-  };
+  const fmt = (ms) => { const total = Math.floor((ms || 0) / 1000); const m = Math.floor(total/60), s = total%60; return `${String(m).padStart(1,'0')}:${String(s).padStart(2,'0')}`; };
 
   return (
     <View style={[styles.audioTile, isMe ? styles.audioTileMe : styles.audioTileOther]}>
@@ -1023,8 +1139,15 @@ function ChatAudioTile({ id, name, url, size=null, isMe=false }) {
           style={styles.audioSlider}
           minimumValue={0}
           maximumValue={durationSec}
-          value={positionSec}
-          onSlidingComplete={onSeek}
+          value={isScrubbing ? sliderValue : positionSec}
+          onSlidingStart={() => { scrubbingRef.current = true; setIsScrubbing(true); }}
+          onValueChange={(v) => setSliderValue(v)}
+          onSlidingComplete={(sec) => {
+            scrubbingRef.current = false;
+            setIsScrubbing(false);
+            setSliderValue(sec);
+            onSeek(sec);
+          }}
           minimumTrackTintColor="#0D47A1"
           maximumTrackTintColor="#CBD5E1"
           thumbTintColor="#0D47A1"
@@ -1032,7 +1155,7 @@ function ChatAudioTile({ id, name, url, size=null, isMe=false }) {
         <View style={styles.audioMetaRow}>
           <Text style={styles.fileMeta}>
             {duration
-              ? `${fmt(position)} / ${fmt(duration)}`
+              ? `${fmt((isScrubbing ? sliderValue*1000 : position))} / ${fmt(duration)}`
               : (size ? `${formatBytes(size)} • Audio` : 'Audio')}
           </Text>
         </View>
@@ -1106,21 +1229,9 @@ const styles = StyleSheet.create({
 
   /* FILE tile */
   fileTile:{
-    flexDirection:'row',
-    alignItems:'center',
-    borderRadius:14,
-    paddingHorizontal:10,
-    paddingVertical:8,
-    marginTop:4,
-    minHeight:52,
-    maxWidth: SCREEN_W * 0.78,
-    minWidth: 180,
-    alignSelf:'flex-start',
-    shadowColor:'#000',
-    shadowOpacity:0.06,
-    shadowRadius:3,
-    shadowOffset:{ width:0, height:1 },
-    elevation:1
+    flexDirection:'row', alignItems:'center', borderRadius:14, paddingHorizontal:10, paddingVertical:8, marginTop:4,
+    minHeight:52, maxWidth: SCREEN_W * 0.78, minWidth: 180, alignSelf:'flex-start',
+    shadowColor:'#000', shadowOpacity:0.06, shadowRadius:3, shadowOffset:{ width:0, height:1 }, elevation:1
   },
   fileTileOther:{ backgroundColor:'#EEF2FF' },
   fileTileMe:{ backgroundColor:'#DDEAFE', alignSelf:'flex-end' },
@@ -1131,24 +1242,12 @@ const styles = StyleSheet.create({
 
   /* AUDIO tile */
   audioTile:{
-    flexDirection:'row',
-    alignItems:'center',
-    borderRadius:14,
-    paddingHorizontal:10,
-    paddingVertical:8,
-    marginTop:4,
-    minHeight:50,
-    maxWidth: SCREEN_W * 0.78,
-    minWidth: 180,
-    shadowColor:'#000',
-    shadowOpacity:0.06,
-    shadowRadius:3,
-    shadowOffset:{ width:0, height:1 },
-    elevation:1
+    flexDirection:'row', alignItems:'center', borderRadius:14, paddingHorizontal:10, paddingVertical:8, marginTop:4,
+    minHeight:50, maxWidth: SCREEN_W * 0.78, minWidth: 180,
+    shadowColor:'#000', shadowOpacity:0.06, shadowRadius:3, shadowOffset:{ width:0, height:1 }, elevation:1
   },
   audioTileOther:{ alignSelf:'flex-start', backgroundColor:'#E6F6FF' },
   audioTileMe:{ alignSelf:'flex-end', backgroundColor:'#DDEAFE' },
-
   playBtn:{ width:32, height:32, borderRadius:16, alignItems:'center', justifyContent:'center', marginRight:10 },
 
   audioContent:{ flex:1, minWidth:120 },

@@ -13,22 +13,40 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 
+/* ----------- Responsive helpers (consistent across devices) ----------- */
+const BASE_WIDTH = 360;
+/** Clamp helper */
+const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+
+function useScale() {
+  const { width, fontScale } = useWindowDimensions();
+  // Keep sizes stable: do not upscale too much on large phones
+  const raw = width / BASE_WIDTH;
+  const scale = clamp(raw, 0.95, 1.05);
+  const ms = (v) => Math.round(v * scale);
+  // Keep fonts stable even if user has large OS font settings
+  const mfs = (v) => Math.round((v * scale) / Math.min(fontScale || 1, 1.1));
+  return { ms, mfs, width };
+}
+
 export default function TeacherDashboard({ navigation }) {
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { ms, mfs, width } = useScale();
 
-  // 2 columns on phones, 3 on wider/tablet screens
-  const isWide = width >= 720;
-  const cardWidth = isWide ? '31.5%' : '48%';
+  // Phones -> 2 columns. Only *bigger* tablets -> 3 columns.
+  const isTablet = width >= 900;
+  const cardWidth = isTablet ? '31.5%' : '48%';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: 16 + insets.bottom }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: ms(16) + insets.bottom }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.header}>Teacher Dashboard</Text>
+        <Text style={[styles.header, { fontSize: mfs(20) }]} allowFontScaling={false}>
+          Teacher Dashboard
+        </Text>
 
         <View style={styles.cardContainer}>
           <DashCard
@@ -36,6 +54,8 @@ export default function TeacherDashboard({ navigation }) {
             icon="book-open-page-variant"
             label="Manage Lessons"
             colors={['#7F00FF', '#E100FF']}
+            ms={ms}
+            mfs={mfs}
             onPress={() => navigation.navigate('ManageScreen')}
           />
 
@@ -44,6 +64,8 @@ export default function TeacherDashboard({ navigation }) {
             icon="account-plus"
             label="Register students"
             colors={['#11998e', '#38ef7d']}
+            ms={ms}
+            mfs={mfs}
             onPress={() => navigation.navigate('RegisterScreen')}
           />
 
@@ -52,6 +74,8 @@ export default function TeacherDashboard({ navigation }) {
             icon="chat"
             label="Student Chats"
             colors={['#00C6FF', '#0072FF']}
+            ms={ms}
+            mfs={mfs}
             onPress={() => navigation.navigate('ChatScreen')}
           />
 
@@ -60,6 +84,8 @@ export default function TeacherDashboard({ navigation }) {
             icon="calendar"
             label="Calendar"
             colors={['#f7971e', '#ffd200']}
+            ms={ms}
+            mfs={mfs}
             onPress={() => navigation.navigate('TeacherAvailabilityScreen')}
           />
 
@@ -68,6 +94,8 @@ export default function TeacherDashboard({ navigation }) {
             icon="account-check"
             label="Attendance"
             colors={['#ff512f', '#dd2476']}
+            ms={ms}
+            mfs={mfs}
             onPress={() => navigation.navigate('AttendanceScreen')}
           />
         </View>
@@ -76,22 +104,49 @@ export default function TeacherDashboard({ navigation }) {
   );
 }
 
-function DashCard({ icon, label, colors, onPress, width }) {
+function DashCard({ icon, label, colors, onPress, width, ms, mfs }) {
   return (
     <Pressable
       onPress={onPress}
-      android_ripple={{ color: 'rgba(255,255,255,0.2)' }}
+      android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
       style={({ pressed }) => [
         styles.cardWrap,
-        { width },
+        { width, borderRadius: ms(16), marginBottom: ms(16) },
         pressed && { transform: [{ scale: 0.98 }] },
       ]}
     >
-      <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.card}>
-        <View style={styles.iconWrap}>
-          <Icon name={icon} size={28} color="#ffffff" />
+      <LinearGradient
+        colors={colors}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[
+          styles.card,
+          {
+            borderRadius: ms(16),
+            paddingVertical: ms(18),
+            paddingHorizontal: ms(14),
+            minHeight: ms(110),
+          },
+        ]}
+      >
+        <View
+          style={[
+            styles.iconWrap,
+            {
+              width: ms(50),
+              height: ms(50),
+              borderRadius: ms(25),
+              marginBottom: ms(10),
+            },
+          ]}
+        >
+          <Icon name={icon} size={ms(24)} color="#ffffff" />
         </View>
-        <Text style={styles.cardText} numberOfLines={2}>
+        <Text
+          style={[styles.cardText, { fontSize: mfs(14), lineHeight: mfs(18) }]}
+          numberOfLines={2}
+          allowFontScaling={false}
+        >
           {label}
         </Text>
       </LinearGradient>
@@ -109,7 +164,6 @@ const styles = StyleSheet.create({
     paddingTop: 16,
   },
   header: {
-    fontSize: 24,
     fontWeight: '900',
     color: '#111827',
     marginBottom: 18,
@@ -123,8 +177,6 @@ const styles = StyleSheet.create({
 
   // Shadowed wrapper to keep nice elevation on both platforms
   cardWrap: {
-    marginBottom: 16,
-    borderRadius: 16,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -138,27 +190,17 @@ const styles = StyleSheet.create({
     }),
   },
   card: {
-    borderRadius: 16,
-    paddingVertical: 20,
-    paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 112,
   },
   iconWrap: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
     backgroundColor: 'rgba(255,255,255,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 10,
   },
   cardText: {
     color: '#ffffff',
-    fontSize: 15,
     fontWeight: '800',
     textAlign: 'center',
-    lineHeight: 20,
   },
 });

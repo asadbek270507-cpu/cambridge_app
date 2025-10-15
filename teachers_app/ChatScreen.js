@@ -45,8 +45,8 @@ export default function ChatScreen() {
   const [menuFor, setMenuFor] = useState(null); // {type, id, title, ...}
   const [actionLoading, setActionLoading] = useState(false);
 
-  // unread counts map: {`${type}:${id}`: number}
-  const [unreadMap, setUnreadMap] = useState({});
+  // unread map: boolean (dot ko‘rsatish uchun)
+  const [unreadMap, setUnreadMap] = useState({}); // {`${type}:${id}`: true|false}
   // mute map (indikator uchun)
   const [muteMap, setMuteMap] = useState({});   // {`${type}:${id}`: boolean}
 
@@ -55,6 +55,9 @@ export default function ChatScreen() {
 
   // DM peers cache
   const peerCacheRef = useRef({}); // { uid: {displayName, avatar, email} }
+
+  // Oxirgi xabar sender cache (group uchun lastSender yo‘q bo‘lsa — 1 marta tekshiramiz)
+  const lastSenderCacheRef = useRef({}); // { key: { senderId, timeMs } }
 
   const filteredRoster = useMemo(
     () => roster.filter(s =>
@@ -108,46 +111,7 @@ export default function ChatScreen() {
     return () => unsub && unsub();
   }, [teacherId]);
 
-  /* ========== LISTEN GROUPS + DMS, UNREAD, MUTE, PIN ========== */
-  const perChatUnsubRefs = useRef({});
-
-  // 🔧 Unread now counts ONLY messages from others (senderId !== myUid)
-  const attachUnreadListener = (entry, readAt, myUid) => {
-    const key = `${entry.type}:${entry.id}`;
-    if (perChatUnsubRefs.current[key]) {
-      perChatUnsubRefs.current[key]();
-      delete perChatUnsubRefs.current[key];
-    }
-
-    const msgsCol =
-      entry.type === "group"
-        ? collection(firestore, `group_chats/${entry.id}/messages`)
-        : collection(firestore, `private_chats/${entry.id}/messages`);
-
-    const qMsgs = query(msgsCol, orderBy("createdAt", "desc"), qLimit(50));
-    const unsub = onSnapshot(
-      qMsgs,
-      (snap) => {
-        const ra = readAt?.toMillis?.() || 0;
-        let count = 0;
-        snap.docs.forEach(d => {
-          const m = d.data();
-          const t = m.createdAt?.toMillis?.() || 0;
-          // faqat boshqalar yuborganini sanaymiz
-          const fromOther = m.senderId && myUid && m.senderId !== myUid;
-          if (fromOther && t && t > ra) count += 1;
-        });
-        setUnreadMap(prev => ({ ...prev, [key]: count }));
-      },
-      (err) => {
-        if (err?.code !== "permission-denied") {
-          console.warn("snapshot error:", err);
-        }
-      }
-    );
-    perChatUnsubRefs.current[key] = unsub;
-  };
-
+  /* ========== LISTEN GROUPS + DMS (yengil) ========== */
   useEffect(() => {
     if (!teacherId) { setItems([]); setLoading(false); return; }
 
@@ -169,13 +133,64 @@ export default function ChatScreen() {
     let dmsData = [];
     let unsubGroups, unsubDMs;
 
+    // Unread boolean hisoblash (qattiq snapshotlar yo‘q)
+    const computeUnreadFlags = async (groups, dms) => {
+      const nextUnread = { ...unreadMap };
+      const cache = lastSenderCacheRef.current;
+
+      // Groups
+      for (const g of groups) {
+        const key = `group:${g.id}`;
+        const readAtMs = g.readBy?.[teacherId]?.toMillis?.() || 0;
+        const lastMs = g.lastMessageAt?.toMillis?.() || 0;
+
+        let unread = false;
+        if (lastMs > readAtMs) {
+          if (g.lastSender) {
+            unread = g.lastSender !== teacherId;
+          } else {
+            // lastSender yo‘q → faqat 1 marta oxirgi xabarni tekshiramiz (lightweight)
+            const cached = cache[key];
+            if (cached && cached.timeMs === lastMs) {
+              unread = cached.senderId && cached.senderId !== teacherId;
+            } else {
+              try {
+                const msgsCol = collection(firestore, `group_chats/${g.id}/messages`);
+                const q1 = query(msgsCol, orderBy("createdAt", "desc"), qLimit(1));
+                const snap = await getDocs(q1);
+                const m = snap.docs[0]?.data?.() || null;
+                const senderId = m?.senderId || null;
+                cache[key] = { senderId, timeMs: lastMs };
+                unread = senderId && senderId !== teacherId;
+              } catch {
+                // Agar o‘qiy olmasak, default: unread=false
+                unread = false;
+              }
+            }
+          }
+        }
+        nextUnread[key] = !!unread;
+      }
+
+      // DMs
+      for (const p of dms) {
+        const key = `dm:${p.id}`;
+        const readAtMs = p.readBy?.[teacherId]?.toMillis?.() || 0;
+        const lastMs = p.updatedAt?.toMillis?.() || 0;
+        const lastSender = p.lastSender || null;
+        const unread = lastMs > readAtMs && lastSender && lastSender !== teacherId;
+        nextUnread[key] = !!unread;
+      }
+
+      setUnreadMap(nextUnread);
+      lastSenderCacheRef.current = cache;
+    };
+
     const mergeAndSet = () => {
       const g = groupsData.map(g => {
-        const readAt = g.readBy?.[teacherId] || null;
         const key = `group:${g.id}`;
         setMuteMap(prev => ({ ...prev, [key]: Array.isArray(g.mutedBy) ? g.mutedBy.includes(teacherId) : false }));
         if (g.pinnedMessage) setPinMap(prev => ({ ...prev, [key]: g.pinnedMessage }));
-        attachUnreadListener({ type: "group", id: g.id }, readAt, teacherId);
 
         return {
           _sort: (g.lastMessageAt?.toMillis?.() || g.createdAt?.toMillis?.() || 0),
@@ -193,11 +208,9 @@ export default function ChatScreen() {
         const otherId = (p.participants || []).find(x => x !== teacherId) || null;
         const peer = otherId ? peerCacheRef.current[otherId] : null;
 
-        const readAt = p.readBy?.[teacherId] || null;
         const key = `dm:${p.id}`;
         setMuteMap(prev => ({ ...prev, [key]: Array.isArray(p.mutedBy) ? p.mutedBy.includes(teacherId) : false }));
         if (p.pinnedMessage) setPinMap(prev => ({ ...prev, [key]: p.pinnedMessage }));
-        attachUnreadListener({ type: "dm", id: p.id }, readAt, teacherId);
 
         return {
           _sort: p.updatedAt?.toMillis?.() || 0,
@@ -211,8 +224,12 @@ export default function ChatScreen() {
         };
       });
 
-      setItems(sortChats([...g, ...d]));
+      const merged = sortChats([...g, ...d]);
+      setItems(merged);
       setLoading(false);
+
+      // Unread booleanlarni hisobla (lightweight)
+      computeUnreadFlags(groupsData, dmsData);
     };
 
     // Groups
@@ -269,10 +286,8 @@ export default function ChatScreen() {
     return () => {
       unsubGroups && unsubGroups();
       unsubDMs && unsubDMs();
-      Object.values(perChatUnsubRefs.current).forEach((u) => u && u());
-      perChatUnsubRefs.current = {};
     };
-  }, [teacherId]);
+  }, [teacherId]); // eslint-disable-line
 
   /* ========== CREATE GROUP ========== */
   const createGroup = async () => {
@@ -288,6 +303,7 @@ export default function ChatScreen() {
         createdAt: serverTimestamp(),
         lastMessage: null,
         lastMessageAt: null,
+        // ✅ agar Chat2 da lastSender ham update qilinsa, group unread aniqroq bo‘ladi
         memberIds: [teacherId, ...pickedIds],
         membersCount: pickedIds.length + 1,
         readBy: { [teacherId]: serverTimestamp() },
@@ -316,6 +332,7 @@ export default function ChatScreen() {
         });
       });
 
+      // group_chats meta
       batch.set(doc(firestore, `group_chats/${gRef.id}`), {
         createdAt: serverTimestamp(),
         lastMessageAt: null,
@@ -340,8 +357,8 @@ export default function ChatScreen() {
         await updateDoc(doc(firestore, "groups", it.id), {
           [`readBy.${teacherId}`]: serverTimestamp(),
         });
-        // UX: badge-ni darhol 0 ga tushiramiz
-        setUnreadMap((m) => ({ ...m, [`group:${it.id}`]: 0 }));
+        // UX: dot'ni darhol olib tashlaymiz
+        setUnreadMap((m) => ({ ...m, [`group:${it.id}`]: false }));
         navigation.navigate("Chat2", {
           groupId: it.id,
           groupName: it.title,
@@ -352,7 +369,7 @@ export default function ChatScreen() {
         await updateDoc(doc(firestore, "private_chats", it.id), {
           [`readBy.${teacherId}`]: serverTimestamp(),
         });
-        setUnreadMap((m) => ({ ...m, [`dm:${it.id}`]: 0 }));
+        setUnreadMap((m) => ({ ...m, [`dm:${it.id}`]: false }));
         navigation.navigate("Chat2", {
           dmId: it.id,
           peerId: it.data.otherId,
@@ -416,12 +433,6 @@ export default function ChatScreen() {
           text: "Ha", style: "destructive",
           onPress: async () => {
             try {
-              const key = `${menuFor.type}:${menuFor.id}`;
-              if (perChatUnsubRefs.current[key]) {
-                perChatUnsubRefs.current[key]();
-                delete perChatUnsubRefs.current[key];
-              }
-
               if (menuFor.type === "group") {
                 const gRef = doc(firestore, "groups", menuFor.id);
                 const createdBy = menuFor?.data?.createdBy;
@@ -460,21 +471,21 @@ export default function ChatScreen() {
   /* ========== RENDER ========== */
   const renderItem = ({ item }) => {
     const key = `${item.type}:${item.id}`;
-    const unread = unreadMap[key] || 0;
+    const unread = !!unreadMap[key];
     const muted = !!muteMap[key];
     const pinned = pinMap[key];
 
     return (
-      <View style={[styles.row, unread > 0 && styles.rowUnread]}>
+      <View style={[styles.row, unread && styles.rowUnread]}>
         <TouchableOpacity style={{ flex: 1, flexDirection: "row", alignItems: "center" }} onPress={() => openItem(item)}>
-          <View style={[styles.avatar, unread > 0 && styles.avatarUnread]}>
+          <View style={[styles.avatar, unread && styles.avatarUnread]}>
             <MaterialCommunityIcons name={item.type === "group" ? "account-group" : "account"} size={20} color="#fff" />
           </View>
 
           <View style={styles.centerCol}>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Text style={[styles.title, unread > 0 && styles.titleUnread]} numberOfLines={1}>{item.title}</Text>
-              {unread > 0 && <View style={styles.dot} />}
+              <Text style={[styles.title, unread && styles.titleUnread]} numberOfLines={1}>{item.title}</Text>
+              {unread && <View style={styles.dot} />}
               {muted && <MaterialCommunityIcons name="bell-off" size={16} color="#9CA3AF" style={{ marginLeft: 6 }} />}
             </View>
 
@@ -486,7 +497,7 @@ export default function ChatScreen() {
                 </Text>
               </View>
             ) : (
-              <Text style={[styles.subtitle, unread > 0 && styles.subtitleUnread]} numberOfLines={1}>
+              <Text style={[styles.subtitle, unread && styles.subtitleUnread]} numberOfLines={1}>
                 {item.subtitle || "Start new chat"}
               </Text>
             )}
@@ -494,14 +505,10 @@ export default function ChatScreen() {
         </TouchableOpacity>
 
         <View style={styles.rightCol}>
-          <Text style={[styles.time, unread > 0 && styles.timeUnread]}>
+          <Text style={[styles.time, unread && styles.timeUnread]}>
             {item.time?.toDate ? formatTime(item.time.toDate()) : ""}
           </Text>
-          {unread > 0 && (
-            <View style={[styles.badge, muted && { backgroundColor: "#9CA3AF" }]}>
-              <Text style={styles.badgeTx}>{unread > 99 ? "99+" : unread}</Text>
-            </View>
-          )}
+          {/* ❌ Raqamli badge o‘rniga hech narsa qo‘ymadik (dot tepa chapda bor) */}
         </View>
 
         {/* 3 nuqta */}
@@ -734,10 +741,6 @@ const styles = StyleSheet.create({
   dot: {
     width: 8, height: 8, borderRadius: 4, backgroundColor: "#0D47A1", marginLeft: 6
   },
-
-  // badge
-  badge: { backgroundColor: "#0D47A1", minWidth: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center", marginTop: 6, paddingHorizontal: 6 },
-  badgeTx: { color: "#fff", fontWeight: "800", fontSize: 12 },
 
   // create modal
   modalBackdrop: {

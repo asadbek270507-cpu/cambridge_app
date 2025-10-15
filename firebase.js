@@ -6,20 +6,29 @@ import {
   getReactNativePersistence,
 } from "firebase/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getFirestore } from "firebase/firestore";
+
+// Firestore (RN/Expo uchun barqaror init)
+import {
+  initializeFirestore,
+  getFirestore,
+  persistentLocalCache,
+  persistentSingleTabManager,
+  setLogLevel,
+} from "firebase/firestore";
+
 import { getStorage } from "firebase/storage";
 
 // --- Sizning config'ingiz ---
 export const firebaseConfig = {
-  apiKey: "AIzaSyB9ThIDs4hNy_IUTHmIwGPYjhbS-rbmGYM",
-  authDomain: "cambridge-school-e4a8f.firebaseapp.com",
+  apiKey: "AIzaSyDfpMnWWELYZoB43Sh7JTmKvZGPKjwMtZI",
+  authDomain: "cambridge-34d8b.firebaseapp.com",
   databaseURL:
-    "https://cambridge-school-e4a8f-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "cambridge-school-e4a8f",
-  storageBucket: "cambridge-school-e4a8f.firebasestorage.app",
-  messagingSenderId: "586644599616",
-  appId: "1:586644599616:web:ef120c3f3448ca65a180a5",
-  measurementId: "G-L6QFTR85TC",
+    "https://cambridge-34d8b-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "cambridge-34d8b",
+  storageBucket: "cambridge-34d8b.firebasestorage.app", // agar rasmiy bucket bo'lsa odatda ...appspot.com bo'ladi
+  messagingSenderId: "930140582475",
+  appId: "1:930140582475:web:7ab7b8193b19631405d3ce",
+  measurementId: "G-EGCMBVY8PL",
 };
 
 // --- App ---
@@ -37,8 +46,33 @@ try {
 }
 export const auth = _auth;
 
-// --- Firestore/Storage ---
-export const firestore = getFirestore(app);
+// --- Firestore (RN/Expo fix) ---
+let _firestore;
+try {
+  _firestore = initializeFirestore(app, {
+    // Mahalliy kechlash — offline/online barqarorligi uchun
+    localCache: persistentLocalCache({
+      tabManager: persistentSingleTabManager(),
+    }),
+
+    // 🔑 RN/Expo’da WebChannel muammolarini chetlab o‘tish:
+    experimentalForceLongPolling: true,   // streamingni to'liq o'chirib, long-pollingga majburlaydi
+    experimentalAutoDetectLongPolling: false,
+    useFetchStreams: false,
+    longPollingOptions: { timeoutSeconds: 10 }, // ixtiyoriy: tezroq retry
+  });
+} catch (e) {
+  // Allaqachon init qilingan bo'lsa
+  _firestore = getFirestore(app);
+}
+export const firestore = _firestore;
+
+// Konsol shovqinini kamaytirish (ixtiyoriy)
+try {
+  setLogLevel(__DEV__ ? "warn" : "error");
+} catch {}
+
+// --- Storage ---
 export const storage = getStorage(app);
 
 // --- Secondary Auth: student yaratishda teacher sessiyasini saqlash ---
@@ -59,3 +93,5 @@ export const getSecondaryAuth = () => {
   }
   return _secondaryAuth;
 };
+
+export default app;

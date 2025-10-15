@@ -1,28 +1,41 @@
 // app.config.js
-export default ({ config }) => ({
+const PROJECT_ID = "a1575b7f-8b30-49f0-bef2-94250a5af081";
+
+export default () => ({
   expo: {
     name: "Cambridge School",
     slug: "Cambridge_School",
-    owner: "asadbek270507",
+    owner: "asadbek2705",
 
     // JS entry
     entryPoint: "./index.js",
 
     platforms: ["ios", "android"],
     scheme: "cambridge-school",
+
+    // ❗ App versiyasi — EAS Update runtimeVersion siyosati bilan bog'liq
     version: "1.0.0",
-    runtimeVersion: config.version,
+
+    // ✅ EAS Update yoqildi: build qayta qilmasdan OTA yuborish uchun
+    updates: {
+      enabled: true,
+      url: `https://u.expo.dev/${PROJECT_ID}`,
+      checkAutomatically: "ON_LOAD",
+      fallbackToCacheTimeout: 0
+    },
+
+    // ✅ Bir xil appVersion bo'lsa, OTA keladi (native o'zgarish bo'lsa versiyani oshirasiz)
+    runtimeVersion: { policy: "appVersion" },
 
     orientation: "portrait",
     icon: "./assets/Cambridge_logo.png",
     userInterfaceStyle: "light",
-
     newArchEnabled: false,
 
     splash: {
       image: "./assets/Cambridge_logo.png",
       resizeMode: "contain",
-      backgroundColor: "#ffffff",
+      backgroundColor: "#ffffff"
     },
 
     notification: { color: "#1565C0" },
@@ -39,21 +52,22 @@ export default ({ config }) => ({
         NSMicrophoneUsageDescription:
           "Ilovangiz ovozli xabar yozish uchun mikrofoningizga ruxsat so'raydi.",
         ITSAppUsesNonExemptEncryption: false,
-        UIBackgroundModes: ["audio"],
-      },
+        UIBackgroundModes: ["audio"]
+      }
     },
 
     android: {
       package: "com.rcsai.cambridgeschool.dev",
-      // EAS build’da FILE ENV; lokalda esa fayl ishlaydi:
       googleServicesFile:
         process.env.GOOGLE_SERVICES_JSON ?? "./android/app/google-services.json",
       jsEngine: "hermes",
       softwareKeyboardLayoutMode: "pan",
+
       adaptiveIcon: {
         foregroundImage: "./assets/Cambridge_logo.png",
-        backgroundColor: "#ffffff",
+        backgroundColor: "#ffffff"
       },
+
       permissions: [
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.RECORD_AUDIO",
@@ -70,49 +84,46 @@ export default ({ config }) => ({
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-      ],
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
 
+    // ✅ EAS projectId (expo-updates ham shundan foydalanadi)
     extra: {
-      // 🔗 EAS project: @asadbek270507/Cambridge_School
-      eas: { projectId: "4abff30e-a432-4baf-a029-6130ac2b4c35" },
+      eas: { projectId: PROJECT_ID }
     },
 
     plugins: [
       "expo-system-ui",
-      ["expo-notifications", { icon: "./assets/Cambridge_logo.png", color: "#1565C0" }],
+      [
+        "expo-notifications",
+        {
+          icon: "./assets/notification-icon.png",
+          color: "#1565C0",
+          iosDisplayInForeground: true
+        }
+      ],
       [
         "expo-image-picker",
         {
-          photosPermission: "Galereyadan rasm/video tanlash uchun ruxsat berasizmi?",
-          cameraPermission: "Kameradan foydalanish uchun ruxsat berasizmi?",
-        },
+          photosPermission:
+            "Galereyadan rasm/video tanlash uchun ruxsat berasizmi?",
+          cameraPermission: "Kameradan foydalanish uchun ruxsat berasizmi?"
+        }
       ],
       "expo-media-library",
-      "expo-audio",
-      "expo-video",
       [
         "expo-build-properties",
         {
           android: {
-            // SDK 36 toolchain
             minSdkVersion: 24,
-            compileSdkVersion: 36,
-            targetSdkVersion: 36,
-            buildToolsVersion: "36.0.0",
-            // KSP mos Kotlin
-            kotlinVersion: "2.1.20",
-            usesCleartextTraffic: true,
+            compileSdkVersion: 34,
+            targetSdkVersion: 34,
+            usesCleartextTraffic: true
           },
-          ios: {},
-        },
-      ],
-      // ❌ "expo-web-browser" NI OLIB TASHLADIK — u config plugin emas
-    ],
-
-    updates: {
-      url: "https://u.expo.dev/4abff30e-a432-4baf-a029-6130ac2b4c35",
-    },
-  },
+          ios: {}
+        }
+      ]
+    ]
+  }
 });

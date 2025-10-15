@@ -1,4 +1,3 @@
-// index.js (ROOT) — B U T U N L A Y    Y A N G I
 import "react-native-gesture-handler";
 import "expo-dev-client";
 
@@ -8,16 +7,16 @@ import { Platform } from "react-native";
 import TrackPlayer from "react-native-track-player";
 import App from "./App";
 
-// --- Expo Notifications: foreground’dayam ko‘rsatish ---
+// --- Global notification handler
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,   // banner ko‘rsat
-    shouldPlaySound: true,   // ovoz chal
+    shouldShowAlert: true,
+    shouldPlaySound: true,
     shouldSetBadge: false,
   }),
 });
 
-// (ixtiyoriy) Debug loglar:
+// Debug logs (optional)
 Notifications.addNotificationReceivedListener((n) => {
   console.log("🔔 Received (foreground):", JSON.stringify(n));
 });
@@ -25,9 +24,8 @@ Notifications.addNotificationResponseReceivedListener((r) => {
   console.log("📝 Tapped:", JSON.stringify(r));
 });
 
-// ANDROID: default notification channel (Oreo+)
+// Android channel
 if (Platform.OS === "android") {
-  // promiselarni kutmasak ham bo‘ladi
   Notifications.setNotificationChannelAsync("default", {
     name: "default",
     importance: Notifications.AndroidImportance.MAX,
@@ -39,8 +37,8 @@ if (Platform.OS === "android") {
   }).catch((e) => console.warn("Channel create failed:", e?.message || String(e)));
 }
 
-// --- Track Player servisini RO'YXATDAN O'TKAZISH (root componentdan oldin!) ---
+// TrackPlayer service
 TrackPlayer.registerPlaybackService(() => require("./trackPlayerService"));
 
-// --- App’ni ishga tushirish ---
+// Launch App
 registerRootComponent(App);

@@ -1,5 +1,5 @@
 // students_app/StudentsApp.js
-import React, { useEffect } from 'react';
+import React from 'react';
 import {
   StatusBar,
   LogBox,
@@ -10,13 +10,8 @@ import {
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Provider as PaperProvider, DefaultTheme } from 'react-native-paper';
-import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
-
-import * as Notifications from 'expo-notifications';
-import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from '../firebase';
-import registerForPushNotificationsAsync from '../utils/registerForPushNotificationsAsync';
 
 // Screens
 import LoginScreen from '../screens/LoginScreen';
@@ -53,18 +48,6 @@ if (
   !globalThis?.nativeFabricUIManager
 ) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
-}
-
-/** Ensure notification handler is set only once (foreground banners/sounds). */
-if (!globalThis.__cambridgeNotifHandlerSet) {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-    }),
-  });
-  globalThis.__cambridgeNotifHandlerSet = true;
 }
 /* ----------------------------------------------------------------------- */
 
@@ -122,108 +105,62 @@ function BottomTabs() {
   );
 }
 
-export default function StudentsApp({ navigation }) {
-  // ✅ Register Expo push token after login (student device)
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      if (u) registerForPushNotificationsAsync();
-    });
-    return unsub;
-  }, []);
-
-  // Android notification channel (max importance)
-  useEffect(() => {
-    (async () => {
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('default', {
-          name: 'Default',
-          importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 250, 250, 250],
-          sound: 'default',
-          lightColor: '#FF231F7C',
-          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-          bypassDnd: true,
-        });
-      }
-    })();
-  }, []);
-
-  // 🔔 When user taps a notification → open notifications list
-  useEffect(() => {
-    const sub = Notifications.addNotificationResponseReceivedListener(() => {
-      try {
-        // If this navigator is a nested screen, ask parent to show this child screen.
-        const parent = navigation?.getParent?.();
-        if (parent?.navigate) {
-          parent.navigate('StudentsApp', { screen: 'NotificationsListScreen' });
-        } else if (navigation?.navigate) {
-          // If it's top-level (rare), navigate directly.
-          navigation.navigate('NotificationsListScreen');
-        }
-      } catch {
-        // ignore
-      }
-    });
-    return () => sub.remove();
-  }, [navigation]);
-
+export default function StudentsApp() {
   return (
-    <SafeAreaProvider>
-      <PaperProvider theme={theme}>
-        <SafeAreaView
-          style={{ flex: 1, backgroundColor: theme.colors.background }}
-          edges={['top', 'left', 'right']}
-        >
-          <View style={{ flex: 1 }}>
-            <StatusBar barStyle="dark-content" backgroundColor={theme.colors.background} />
+    <PaperProvider theme={theme}>
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: theme.colors.background }}
+        edges={['top', 'left', 'right']}
+      >
+        <View style={{ flex: 1 }}>
+          <StatusBar barStyle="dark-content" backgroundColor={theme.colors.background} />
 
-            {/* This is a nested navigator (no NavigationContainer here) */}
-            <Stack.Navigator initialRouteName="Main" screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="Main" component={BottomTabs} />
+          {/* Nested navigator (NavigationContainer root App.js da) */}
+          <Stack.Navigator initialRouteName="Main" screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="Main" component={BottomTabs} />
 
-              {/* Header hidden screens */}
-              <Stack.Screen name="LoginScreen" component={LoginScreen} />
-              <Stack.Screen name="MultiLevel" component={MultiLevelScreen} />
-              <Stack.Screen name="ListeningScreen" component={ListeningScreen} />
-              <Stack.Screen name="ReadingScreen" component={ReadingScreen} />
-              <Stack.Screen name="WritingScreen" component={WritingScreen} />
-              <Stack.Screen name="SpeakingScreen" component={SpeakingScreen} />
-              <Stack.Screen name="ListeningLevel" component={ListeningLevel} />
-              <Stack.Screen name="ReadingLevel" component={ReadingLevel} />
-              <Stack.Screen name="SpeakingLevel" component={SpeakingLevel} />
-              <Stack.Screen name="GrammarScreen" component={GrammarScreen} />
-              <Stack.Screen name="IeltsScreen" component={IeltsScreen} />
-              <Stack.Screen name="MaterialsLevel" component={MaterialsLevel} />
-              <Stack.Screen name="GrammarMaterials" component={GrammarMaterials} />
-              <Stack.Screen name="LessonMaterials" component={LessonMaterials} />
-              <Stack.Screen name="WritingLevel" component={WritingLevel} />
-              <Stack.Screen name="LessonMaterialsScreen" component={LessonMaterialsScreen} />
+            {/* Header hidden screens */}
+            <Stack.Screen name="LoginScreen" component={LoginScreen} />
+            <Stack.Screen name="MultiLevel" component={MultiLevelScreen} />
+            <Stack.Screen name="ListeningScreen" component={ListeningScreen} />
+            <Stack.Screen name="ReadingScreen" component={ReadingScreen} />
+            <Stack.Screen name="WritingScreen" component={WritingScreen} />
+            <Stack.Screen name="SpeakingScreen" component={SpeakingScreen} />
+            <Stack.Screen name="ListeningLevel" component={ListeningLevel} />
+            <Stack.Screen name="ReadingLevel" component={ReadingLevel} />
+            <Stack.Screen name="SpeakingLevel" component={SpeakingLevel} />
+            <Stack.Screen name="GrammarScreen" component={GrammarScreen} />
+            <Stack.Screen name="IeltsScreen" component={IeltsScreen} />
+            <Stack.Screen name="MaterialsLevel" component={MaterialsLevel} />
+            <Stack.Screen name="GrammarMaterials" component={GrammarMaterials} />
+            <Stack.Screen name="LessonMaterials" component={LessonMaterials} />
+            <Stack.Screen name="WritingLevel" component={WritingLevel} />
+            <Stack.Screen name="LessonMaterialsScreen" component={LessonMaterialsScreen} />
 
-              {/* These two show headers */}
-              <Stack.Screen
-                name="ChatScreen"
-                component={ChatScreen}
-                options={{
-                  headerShown: true,
-                  title: 'Chat',
-                  headerStyle: { backgroundColor: '#fff' },
-                  headerTintColor: '#111',
-                }}
-              />
-              <Stack.Screen
-                name="NotificationsListScreen"
-                component={NotificationsListScreen}
-                options={{
-                  headerShown: true,
-                  title: 'Notifications',
-                  headerStyle: { backgroundColor: '#fff' },
-                  headerTintColor: '#111',
-                }}
-              />
-            </Stack.Navigator>
-          </View>
-        </SafeAreaView>
-      </PaperProvider>
-    </SafeAreaProvider>
+            {/* These two show headers */}
+            <Stack.Screen
+              name="ChatScreen"
+              component={ChatScreen}
+              options={{
+                headerShown: true,
+                title: 'Chat',
+                headerStyle: { backgroundColor: '#fff' },
+                headerTintColor: '#111',
+              }}
+            />
+            <Stack.Screen
+              name="NotificationsListScreen"
+              component={NotificationsListScreen}
+              options={{
+                headerShown: true,
+                title: 'Notifications',
+                headerStyle: { backgroundColor: '#fff' },
+                headerTintColor: '#111',
+              }}
+            />
+          </Stack.Navigator>
+        </View>
+      </SafeAreaView>
+    </PaperProvider>
   );
 }

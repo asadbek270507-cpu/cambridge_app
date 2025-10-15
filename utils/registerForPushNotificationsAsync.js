@@ -7,61 +7,58 @@ import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, firestore } from '../firebase';
 
 /**
- * Student foydalanuvchiga Expo push token olish va Firestore'ga (agar o'zgargan bo'lsa) yozish.
- * Admin/Teacher uchun token yozilmaydi.
- * @returns {Promise<string|null>} expoPushToken yoki null
+ * Expo push token qaytaradi va Firestore’ga yozadi.
+ * @param {object} opts
+ * @param {boolean} opts.onlyStudents  true bo‘lsa, faqat studentlarga yozadi (default: false)
  */
-export default async function registerForPushNotificationsAsync() {
+export default async function registerForPushNotificationsAsync(opts = {}) {
+  const { onlyStudents = false } = opts;
+
   try {
-    // 1) Real qurilma sharti
+    // Faqat real qurilmada push ishlaydi
     if (!Device.isDevice) {
       console.warn('Push notifications require a physical device');
       return null;
     }
 
-    // 2) Android kanal (idempotent)
+    // ANDROID: channel (Oreo+)
     if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('default', {
-        name: 'default',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#FF231F7C',
-        sound: 'default',
-        enableVibrate: true,
-        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-        bypassDnd: true,
-      });
+      try {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'default',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#FF231F7C',
+          sound: 'default',
+          enableVibrate: true,
+          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+          bypassDnd: true,
+        });
+      } catch (e) {
+        console.warn('Channel create failed:', e?.message || String(e));
+      }
     }
 
-    // 3) Notifikatsiya ruxsati
+    // Runtime permission (Android 13+ va iOS)
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
     if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
+      const req = await Notifications.requestPermissionsAsync();
+      finalStatus = req.status;
     }
     if (finalStatus !== 'granted') {
       console.warn('Push permission not granted');
       return null;
     }
 
-    // 4) Auth tekshirish
+    // User tekshirish
     const u = auth.currentUser;
-    if (!u) return null;
-
-    // 5) Foydalanuvchi rolini aniqlash (faqat studentlarga token yozamiz)
-    const userRef = doc(firestore, 'users', u.uid);
-    const snap = await getDoc(userRef);
-    const roleFromDb = snap.exists() ? snap.data()?.role : null;
-    const roleGuessFromEmail = u.email?.toLowerCase().endsWith('@student.com') ? 'student' : null;
-    const role = roleFromDb || roleGuessFromEmail;
-
-    if (role !== 'student') {
-      // Admin yoki Teacher bo‘lsa — token saqlamaymiz
-      return null;
+    if (!u) {
+      console.warn('No currentUser — cannot save push token');
+      // Baribir tokenni qaytaramiz (foydalanuvchi keyin login qilishi mumkin)
     }
 
-    // 6) EAS projectId (Expo SDK 51+ talab qiladi)
+    // EAS Project ID (Expo Push token olish uchun majburiy)
     const projectId =
       Constants?.expoConfig?.extra?.eas?.projectId ??
       Constants?.easConfig?.projectId ??
@@ -72,23 +69,47 @@ export default async function registerForPushNotificationsAsync() {
       return null;
     }
 
-    // 7) Expo push tokenni olish
+    // Expo Push Token
     const tokenObj = await Notifications.getExpoPushTokenAsync({ projectId });
     const expoPushToken = tokenObj?.data || tokenObj;
-    if (!expoPushToken) return null;
+    if (!expoPushToken) {
+      console.warn('Failed to get Expo push token');
+      return null;
+    }
 
-    // 8) Firestore'ga faqat TOKEN O'ZGARGANDA yozamiz
-    const prevToken = snap.exists() ? snap.data()?.expoPushToken : null;
-    if (prevToken !== expoPushToken) {
-      await setDoc(
-        userRef,
-        {
-          expoPushToken,
-          platform: Platform.OS,
-          pushTokenUpdatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
+    console.log('✅ Expo Push Token:', expoPushToken);
+
+    // (ixtiyoriy) Role tekshirish — agar onlyStudents true bo‘lsa:
+    let canWrite = true;
+    if (onlyStudents && u) {
+      try {
+        const snap = await getDoc(doc(firestore, 'users', u.uid));
+        const role =
+          (snap.exists() && snap.data()?.role) ||
+          (u.email?.toLowerCase().endsWith('@student.com') ? 'student' : null);
+        if (role !== 'student') {
+          canWrite = false;
+        }
+      } catch {
+        canWrite = false;
+      }
+    }
+
+    // Firestore’ga yozish (hamma rol uchun default yozamiz)
+    if (u && canWrite) {
+      try {
+        await setDoc(
+          doc(firestore, 'users', u.uid),
+          {
+            expoPushToken,
+            platform: Platform.OS,
+            pushTokenUpdatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (e) {
+        console.warn('Failed to save token to Firestore:', e?.message || String(e));
+      }
     }
 
     return expoPushToken;
