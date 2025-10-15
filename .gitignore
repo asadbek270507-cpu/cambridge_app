@@ -34,6 +34,9 @@ build/
 .env
 serviceAccount.json
 *.pem
+cambridge-school-e4a8f-firebase-adminsdk-*.json
+cambridge-school-e4a8f-*.json
+android/app/google-services.json
 
 # Misc
 *.log
