@@ -1,11 +1,11 @@
 // app.config.js
-const PROJECT_ID = "59bb63a8-59ee-405b-9e7e-5d98f89cd8b1";
+const PROJECT_ID = "d2a970c5-f9d0-4390-8127-590381556704";
 
 export default () => ({
   expo: {
     name: "Cambridge School",
     slug: "Cambridge_School",
-    owner: "asadbek270505",
+    owner: "asadbek12",
 
     // JS entry
     entryPoint: "./index.js",
@@ -57,7 +57,7 @@ export default () => ({
     android: {
       package: "com.rcsai.cambridge_admin",
       // Agar siz google-services.json faylini repo ichida saqlayotgan bo'lsangiz:
-      googleServicesFile: "./android/app/google-services.json",
+      googleServicesFile: "./google-services.json",
       // Agar faylni EAS environment variable orqali taqdim etmoqchi bo'lsangiz,
       // shuni o'rniga quyidagicha yozing:
       // googleServicesFile: process.env.GOOGLE_SERVICES_JSON,
