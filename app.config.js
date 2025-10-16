@@ -1,11 +1,11 @@
 // app.config.js
-const PROJECT_ID = "a1575b7f-8b30-49f0-bef2-94250a5af081";
+const PROJECT_ID = "59bb63a8-59ee-405b-9e7e-5d98f89cd8b1";
 
 export default () => ({
   expo: {
     name: "Cambridge School",
     slug: "Cambridge_School",
-    owner: "asadbek2705",
+    owner: "asadbek270505",
 
     // JS entry
     entryPoint: "./index.js",
@@ -13,10 +13,9 @@ export default () => ({
     platforms: ["ios", "android"],
     scheme: "cambridge-school",
 
-    // ❗ App versiyasi — EAS Update runtimeVersion siyosati bilan bog'liq
+    // App version
     version: "1.0.0",
 
-    // ✅ EAS Update yoqildi: build qayta qilmasdan OTA yuborish uchun
     updates: {
       enabled: true,
       url: `https://u.expo.dev/${PROJECT_ID}`,
@@ -24,7 +23,6 @@ export default () => ({
       fallbackToCacheTimeout: 0
     },
 
-    // ✅ Bir xil appVersion bo'lsa, OTA keladi (native o'zgarish bo'lsa versiyani oshirasiz)
     runtimeVersion: { policy: "appVersion" },
 
     orientation: "portrait",
@@ -57,9 +55,12 @@ export default () => ({
     },
 
     android: {
-      package: "com.rcsai.cambridgeschool.dev",
-      googleServicesFile:
-        process.env.GOOGLE_SERVICES_JSON ?? "./android/app/google-services.json",
+      package: "com.rcsai.cambridge_admin",
+      // Agar siz google-services.json faylini repo ichida saqlayotgan bo'lsangiz:
+      googleServicesFile: "./android/app/google-services.json",
+      // Agar faylni EAS environment variable orqali taqdim etmoqchi bo'lsangiz,
+      // shuni o'rniga quyidagicha yozing:
+      // googleServicesFile: process.env.GOOGLE_SERVICES_JSON,
       jsEngine: "hermes",
       softwareKeyboardLayoutMode: "pan",
 
@@ -88,7 +89,6 @@ export default () => ({
       ]
     },
 
-    // ✅ EAS projectId (expo-updates ham shundan foydalanadi)
     extra: {
       eas: { projectId: PROJECT_ID }
     },
@@ -117,8 +117,9 @@ export default () => ({
         {
           android: {
             minSdkVersion: 24,
-            compileSdkVersion: 34,
-            targetSdkVersion: 34,
+            compileSdkVersion: 36,      // <-- BU YER OʻZGARTIRILDI
+            targetSdkVersion: 36,       // <-- BU YER OʻZGARTIRILDI
+            buildToolsVersion: "36.0.0",
             usesCleartextTraffic: true
           },
           ios: {}
