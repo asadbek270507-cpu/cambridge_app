@@ -19,7 +19,6 @@ android/build/
 
 # ⚠️ Google service fayllari — faqat android/app ichidagi fayl kerak!
 # Shuning uchun faqat u joylashgan joyni kiritamiz:
-!android/app/google-services.json
 
 # ===============================
 # 🍏 iOS build files
@@ -45,7 +44,6 @@ build/
 # 🔑 Environment / credentials
 # ===============================
 .env
-serviceAccount.json
 *.pem
 cambridge-school-e4a8f-firebase-adminsdk-*.json
 cambridge-school-e4a8f-*.json
@@ -60,13 +58,11 @@ cambridge-school-e4a8f-*.json
 # 🚫 Ignore firebase admin keys (server side)
 # ===============================
 *.firebase-adminsdk-*.json
-serviceAccount.json
 
 # ===============================
 # ✅ Allow app config files
 # ===============================
 !app.config.js
-!app.config.json
 
 # ===============================
 # 🪟 Node exe (Windows uchun)
