@@ -7,30 +7,41 @@
     "preview": {
       "distribution": "internal",
       "channel": "preview",
-      "android": { "buildType": "apk" },
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
         "NODE_VERSION": "20.19.4",
-        "YARN_IGNORE_ENGINES": "true"
+        "YARN_IGNORE_ENGINES": "true",
+        "GOOGLE_SERVICES_JSON": "@google-services.json"
       }
     },
     "production": {
       "channel": "production",
-      "android": { "buildType": "app-bundle" },
+      "android": {
+        "buildType": "app-bundle"
+      },
       "env": {
         "NODE_VERSION": "20.19.4",
-        "YARN_IGNORE_ENGINES": "true"
+        "YARN_IGNORE_ENGINES": "true",
+        "GOOGLE_SERVICES_JSON": "@google-services.json"
       }
     },
     "development": {
       "developmentClient": true,
       "distribution": "internal",
       "channel": "development",
-      "android": { "buildType": "apk" },
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
         "NODE_VERSION": "20.19.4",
-        "YARN_IGNORE_ENGINES": "true"
+        "YARN_IGNORE_ENGINES": "true",
+        "GOOGLE_SERVICES_JSON": "@google-services.json"
       }
     }
   },
-  "submit": { "production": {} }
+  "submit": {
+    "production": {}
+  }
 }

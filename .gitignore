@@ -43,7 +43,6 @@ build/
 # ===============================
 # 🔑 Environment / credentials
 # ===============================
-.env
 *.pem
 cambridge-school-e4a8f-firebase-adminsdk-*.json
 cambridge-school-e4a8f-*.json
@@ -62,7 +61,6 @@ cambridge-school-e4a8f-*.json
 # ===============================
 # ✅ Allow app config files
 # ===============================
-!app.config.js
 
 # ===============================
 # 🪟 Node exe (Windows uchun)
