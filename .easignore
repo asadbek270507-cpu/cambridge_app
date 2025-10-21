@@ -1,31 +1,45 @@
-# Managed workflow: lokal native papkalar arxivga kirmasin
-android/
-ios/
+# ✅ Expo managed workflow uchun tozalangan konfiguratsiya
+# Native papkalarni butunlay emas, faqat build va cache qismlarini ignore qilamiz
 
-# Node/Expo keshlari
+# Android build & gradle caches
+android/.gradle/
+android/build/
+android/app/build/
+
+# ✅ Firebase uchun MUHIM:
+# google-services.json faylni EAS Build arxiviga kiritamiz
+!android/app/google-services.json
+
+# iOS build & Pods
+ios/build/
+ios/Pods/
+
+# Node/Expo caches
 node_modules/
 .expo/
 .expo-shared/
 .expo-cache/
 .expo/web/
 
-# Android keshlari
-android/.gradle/
-android/build/
+# Logs
+*.log
 
-# iOS kesh/Pods
-ios/build/
-ios/Pods/
+# macOS system
+.DS_Store
 
-# Lockfiles: npm ishlatamiz → package-lock.jsonni SAQLAYMIZ
-yarn.lock
+# Yarn cache
 .yarn/
 .pnp.*
 
-# Qo‘shimcha mayda-chuydalar
-.DS_Store
+# Git va IDE fayllari
 .git/
 .github/
 .vscode/
+
+# Build artifacts
 dist/
 coverage/
+
+# Env fayllar (mahfiy ma’lumotlar)
+.env
+.env.*
