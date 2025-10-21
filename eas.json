@@ -13,7 +13,7 @@
       "env": {
         "NODE_VERSION": "20.19.4",
         "YARN_IGNORE_ENGINES": "true",
-        "GOOGLE_SERVICES_JSON": "@google-services.json"
+        "GOOGLE_SERVICES_JSON": "@GOOGLE_SERVICES_JSON"
       }
     },
     "production": {
@@ -24,7 +24,7 @@
       "env": {
         "NODE_VERSION": "20.19.4",
         "YARN_IGNORE_ENGINES": "true",
-        "GOOGLE_SERVICES_JSON": "@google-services.json"
+        "GOOGLE_SERVICES_JSON": "@GOOGLE_SERVICES_JSON"
       }
     },
     "development": {
@@ -37,7 +37,7 @@
       "env": {
         "NODE_VERSION": "20.19.4",
         "YARN_IGNORE_ENGINES": "true",
-        "GOOGLE_SERVICES_JSON": "@google-services.json"
+        "GOOGLE_SERVICES_JSON": "@GOOGLE_SERVICES_JSON"
       }
     }
   },

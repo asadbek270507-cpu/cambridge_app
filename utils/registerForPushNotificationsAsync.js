@@ -4,7 +4,7 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, firestore } from '../firebase';
+import { auth, firestore } from '../firebase1';
 
 /**
  * Expo push token qaytaradi va Firestore’ga yozadi.

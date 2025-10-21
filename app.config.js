@@ -1,11 +1,11 @@
 // app.config.js
-const PROJECT_ID = "d2a970c5-f9d0-4390-8127-590381556704";
+const PROJECT_ID = "9e64fca1-314b-4365-aea8-781e8dddd77e";
 
 export default () => ({
   expo: {
     name: "Cambridge School",
     slug: "Cambridge_School",
-    owner: "asadbek12",
+    owner: "asadbek717",
 
     // JS entry
     entryPoint: "./index.js",
@@ -23,7 +23,7 @@ export default () => ({
       fallbackToCacheTimeout: 0
     },
 
-    runtimeVersion: { policy: "appVersion" },
+runtimeVersion: "1.0.0",
 
     orientation: "portrait",
     icon: "./assets/Cambridge_logo.png",
@@ -36,11 +36,11 @@ export default () => ({
       backgroundColor: "#ffffff"
     },
 
-    notification: { color: "#1565C0" },
+   
 
     ios: {
       supportsTablet: true,
-      bundleIdentifier: "com.rcsai.cambridgeschool",
+      bundleIdentifier: "com.cambridgeschool",
       jsEngine: "hermes",
       infoPlist: {
         NSPhotoLibraryUsageDescription:
@@ -55,7 +55,8 @@ export default () => ({
     },
 
     android: {
-      package: "com.rcsai.cambridge_admin",
+      notifications: { color: "#1565C0" },
+      package: "com.cambridge.app",
       // Agar siz google-services.json faylini repo ichida saqlayotgan bo'lsangiz:
       googleServicesFile: "./android/app/google-services.json",
       // Agar faylni EAS environment variable orqali taqdim etmoqchi bo'lsangiz,

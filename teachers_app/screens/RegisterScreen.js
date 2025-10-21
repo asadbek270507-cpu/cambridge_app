@@ -62,7 +62,7 @@ export default function RegisterScreen() {
   const navigation = useNavigation();
 
   // ✅ All callables -> asia-southeast1 (teacher_createStudentDoc shu yerda)
-  const functions = getFunctions(undefined, "asia-southeast1");
+  const functions = getFunctions(undefined, "us-central1");
   const fnCreateStudentDoc = httpsCallable(functions, "teacher_createStudentDoc");
   const fnSetRandomPassword = httpsCallable(functions, "admin_setRandomPassword");
   const fnDeleteDeep = httpsCallable(functions, "admin_deleteStudentDeep");

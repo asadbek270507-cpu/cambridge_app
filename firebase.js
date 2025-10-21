@@ -20,15 +20,13 @@ import { getStorage } from "firebase/storage";
 
 // --- Sizning config'ingiz ---
 export const firebaseConfig = {
-  apiKey: "AIzaSyDfpMnWWELYZoB43Sh7JTmKvZGPKjwMtZI",
-  authDomain: "cambridge-34d8b.firebaseapp.com",
-  databaseURL:
-    "https://cambridge-34d8b-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "cambridge-34d8b",
-  storageBucket: "cambridge-34d8b.firebasestorage.app", // agar rasmiy bucket bo'lsa odatda ...appspot.com bo'ladi
-  messagingSenderId: "930140582475",
-  appId: "1:930140582475:web:7ab7b8193b19631405d3ce",
-  measurementId: "G-EGCMBVY8PL",
+  apiKey: "AIzaSyD0ZY7en1aXfRRG4gXyQZEjHWBFGBQ165s",
+  authDomain: "sound-memory-474606-p1.firebaseapp.com",
+  projectId: "sound-memory-474606-p1",
+  storageBucket: "sound-memory-474606-p1.firebasestorage.app",
+  messagingSenderId: "1088934512143",
+  appId: "1:1088934512143:web:cf46e1c68e68946d75c57a",
+  measurementId: "G-V14N5D0DGX"
 };
 
 // --- App ---

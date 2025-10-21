@@ -68,20 +68,6 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [roleReady, setRoleReady] = useState(false);
 
-  // --- Android channel
-  useEffect(() => {
-    if (Platform.OS === "android") {
-      Notifications.setNotificationChannelAsync("default", {
-        name: "default",
-        importance: Notifications.AndroidImportance.MAX,
-        sound: "default",
-        vibrationPattern: [0, 250, 250, 250],
-        enableVibrate: true,
-        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-        bypassDnd: true,
-      }).catch((e) => console.warn(e?.message || e));
-    }
-  }, []);
 
   // --- Auth listener
   useEffect(() => {

@@ -28,3 +28,4 @@ npm-shrinkwrap.json
 # Expo config files
 !app.config.js
 !eas.json
+.expo/
