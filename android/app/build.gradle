@@ -28,7 +28,7 @@ def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBu
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 android {
-    namespace 'com.rcsai.cambridge_admin'
+    namespace 'com.cambridge.app'
     ndkVersion rootProject.ext.ndkVersion
 
     // ✅ Yangilangan SDK versiyalar
@@ -36,7 +36,7 @@ android {
     buildToolsVersion "36.0.0"
 
     defaultConfig {
-        applicationId 'com.rcsai.cambridge_admin'
+        applicationId 'com.cambridge.app'
         minSdkVersion 24
         targetSdkVersion 36
         versionCode 1

@@ -1,4 +1,4 @@
-package com.rcsai.cambridge_admin
+package com.cambridge.app
 
 import android.app.Application
 import android.content.res.Configuration
