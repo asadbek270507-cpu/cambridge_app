@@ -31,11 +31,9 @@ npm-shrinkwrap.json
 yarn.lock
 
 # Google Services (faqat android/app ichidagi faylni track qilamiz)
-!android/app/google-services.json
+
 
 # Expo config files
-!app.config.js
-!eas.json
 
 # VSCode settings
 .vscode/

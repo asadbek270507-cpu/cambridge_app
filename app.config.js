@@ -1,11 +1,11 @@
 // app.config.js
-const PROJECT_ID = "9e64fca1-314b-4365-aea8-781e8dddd77e";
+const PROJECT_ID = "057b1c78-22b5-4922-8270-5a528d71df87";
 
 export default () => ({
   expo: {
     name: "Cambridge School",
     slug: "Cambridge_School",
-    owner: "asadbek717",
+    owner: "asadbek718",
 
     // JS entry
     entryPoint: "./index.js",
@@ -58,7 +58,7 @@ runtimeVersion: "1.0.0",
       notifications: { color: "#1565C0" },
       package: "com.cambridge.app",
       // Agar siz google-services.json faylini repo ichida saqlayotgan bo'lsangiz:
-      googleServicesFile: process.env.GOOGLE_SERVICES_JSON,
+googleServicesFile: process.env.GOOGLE_SERVICES_JSON,
       // Agar faylni EAS environment variable orqali taqdim etmoqchi bo'lsangiz,
       // shuni o'rniga quyidagicha yozing:
       // googleServicesFile: process.env.GOOGLE_SERVICES_JSON,
