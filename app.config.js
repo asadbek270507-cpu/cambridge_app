@@ -58,7 +58,7 @@ runtimeVersion: "1.0.0",
       notifications: { color: "#1565C0" },
       package: "com.cambridge.app",
       // Agar siz google-services.json faylini repo ichida saqlayotgan bo'lsangiz:
-      googleServicesFile: "./android/app/google-services.json",
+      googleServicesFile: process.env.GOOGLE_SERVICES_JSON,
       // Agar faylni EAS environment variable orqali taqdim etmoqchi bo'lsangiz,
       // shuni o'rniga quyidagicha yozing:
       // googleServicesFile: process.env.GOOGLE_SERVICES_JSON,

@@ -1,26 +1,34 @@
-# node modules
+# Node modules
 node_modules/
 
-# expo
+# Expo cache & build
 .expo/
 .expo-shared/
 .expo-cache/
 .expo/web/
 
-# android/iOS build files
+# Android build & gradle
 android/.gradle/
 android/build/
+android/app/build/
+
+# iOS build & Pods
 ios/build/
 ios/Pods/
 
-# Lockfiles
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# Env files
+.env
+
+# Lockfiles (version control uchun tavsiya qilinadi)
 package-lock.json
 npm-shrinkwrap.json
-
-# Misc
-*.log
-.DS_Store
-.env
+yarn.lock
 
 # Google Services (faqat android/app ichidagi faylni track qilamiz)
 !android/app/google-services.json
@@ -28,4 +36,6 @@ npm-shrinkwrap.json
 # Expo config files
 !app.config.js
 !eas.json
-.expo/
+
+# VSCode settings
+.vscode/
