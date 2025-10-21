@@ -1,22 +1,21 @@
 {
   "project_info": {
-    "project_number": "930140582475",
-    "firebase_url": "https://cambridge-34d8b-default-rtdb.asia-southeast1.firebasedatabase.app",
-    "project_id": "cambridge-34d8b",
-    "storage_bucket": "cambridge-34d8b.firebasestorage.app"
+    "project_number": "1088934512143",
+    "project_id": "sound-memory-474606-p1",
+    "storage_bucket": "sound-memory-474606-p1.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:930140582475:android:3ee892621501d2bb05d3ce",
+        "mobilesdk_app_id": "1:1088934512143:android:96dd87e83b2911bb75c57a",
         "android_client_info": {
-          "package_name": "com.rcsai.cambridge_admin"
+          "package_name": "com.cambridge.app"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyB1hWVXXQZsiGDJRM-l47Fp7Z52a7sw5NA"
+          "current_key": "AIzaSyD1IzP0UbIuTm6Vf-F178Xs53QEcuX0irc"
         }
       ],
       "services": {

@@ -1,21 +1,20 @@
 // app.config.js
-import 'dotenv/config'; // .env faylini yuklash
-const PROJECT_ID = process.env.EAS_PROJECT_ID || "d2a970c5-f9d0-4390-8127-590381556704";
+const PROJECT_ID = "d2a970c5-f9d0-4390-8127-590381556704";
 
 export default () => ({
   expo: {
     name: "Cambridge School",
     slug: "Cambridge_School",
     owner: "asadbek12",
+
+    // JS entry
     entryPoint: "./index.js",
+
     platforms: ["ios", "android"],
     scheme: "cambridge-school",
+
+    // App version
     version: "1.0.0",
-    runtimeVersion: { policy: "appVersion" },
-    orientation: "portrait",
-    icon: "./assets/Cambridge_logo.png",
-    userInterfaceStyle: "light",
-    newArchEnabled: false,
 
     updates: {
       enabled: true,
@@ -23,6 +22,13 @@ export default () => ({
       checkAutomatically: "ON_LOAD",
       fallbackToCacheTimeout: 0
     },
+
+    runtimeVersion: { policy: "appVersion" },
+
+    orientation: "portrait",
+    icon: "./assets/Cambridge_logo.png",
+    userInterfaceStyle: "light",
+    newArchEnabled: false,
 
     splash: {
       image: "./assets/Cambridge_logo.png",
@@ -37,9 +43,12 @@ export default () => ({
       bundleIdentifier: "com.rcsai.cambridgeschool",
       jsEngine: "hermes",
       infoPlist: {
-        NSPhotoLibraryUsageDescription: "Ilovangiz galereyangizdan rasm va video tanlash uchun ruxsat so'raydi.",
-        NSCameraUsageDescription: "Ilovangiz rasmga olish yoki video yozish uchun kamerangizga ruxsat so'raydi.",
-        NSMicrophoneUsageDescription: "Ilovangiz ovozli xabar yozish uchun mikrofoningizga ruxsat so'raydi.",
+        NSPhotoLibraryUsageDescription:
+          "Ilovangiz galereyangizdan rasm va video tanlash uchun ruxsat so'raydi.",
+        NSCameraUsageDescription:
+          "Ilovangiz rasmga olish yoki video yozish uchun kamerangizga ruxsat so'raydi.",
+        NSMicrophoneUsageDescription:
+          "Ilovangiz ovozli xabar yozish uchun mikrofoningizga ruxsat so'raydi.",
         ITSAppUsesNonExemptEncryption: false,
         UIBackgroundModes: ["audio"]
       }
@@ -47,12 +56,19 @@ export default () => ({
 
     android: {
       package: "com.rcsai.cambridge_admin",
+      // Agar siz google-services.json faylini repo ichida saqlayotgan bo'lsangiz:
+      googleServicesFile: "./android/app/google-services.json",
+      // Agar faylni EAS environment variable orqali taqdim etmoqchi bo'lsangiz,
+      // shuni o'rniga quyidagicha yozing:
+      // googleServicesFile: process.env.GOOGLE_SERVICES_JSON,
       jsEngine: "hermes",
       softwareKeyboardLayoutMode: "pan",
+
       adaptiveIcon: {
         foregroundImage: "./assets/Cambridge_logo.png",
         backgroundColor: "#ffffff"
       },
+      
       permissions: [
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.RECORD_AUDIO",
@@ -70,9 +86,7 @@ export default () => ({
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
         "android.permission.MODIFY_AUDIO_SETTINGS"
-      ],
-      // Google Services faylini .env orqali yuklash
-      googleServicesFile: process.env.GOOGLE_SERVICES_JSON || "./android/app/google-services.json",
+      ]
     },
 
     extra: {
@@ -92,7 +106,8 @@ export default () => ({
       [
         "expo-image-picker",
         {
-          photosPermission: "Galereyadan rasm/video tanlash uchun ruxsat berasizmi?",
+          photosPermission:
+            "Galereyadan rasm/video tanlash uchun ruxsat berasizmi?",
           cameraPermission: "Kameradan foydalanish uchun ruxsat berasizmi?"
         }
       ],
@@ -106,16 +121,22 @@ export default () => ({
             targetSdkVersion: 36,
             buildToolsVersion: "36.0.0",
             usesCleartextTraffic: true,
+            // =======================================================================
+            // BU YERDA YECHIM. MANIFEST MERGERGA TO'G'RIDAN TO'G'RI BUYRUQ BERISH.
+            // =======================================================================
             manifest: {
-              "meta-data[name=com.google.firebase.messaging.default_notification_color]": {
-                tools: "replace",
-                resource: "@color/notification_icon_color"
-              },
-              "meta-data[name=com.google.firebase.messaging.default_notification_icon]": {
-                tools: "replace",
-                resource: "@drawable/notification_icon"
-              }
+                // notification_color ziddiyatini majburan yechish.
+                "meta-data[name=com.google.firebase.messaging.default_notification_color]": {
+                  tools: "replace",
+                  resource: "@color/notification_icon_color"
+                },
+                // notification_icon ziddiyatini majburan yechish.
+                "meta-data[name=com.google.firebase.messaging.default_notification_icon]": {
+                  tools: "replace",
+                  resource: "@drawable/notification_icon"
+                }
             }
+            // =======================================================================
           },
           ios: {}
         }

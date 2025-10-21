@@ -1,68 +1,30 @@
-# ===============================
-# 📦 Dependencies
-# ===============================
+# node modules
 node_modules/
 
-# ===============================
-# ⚙️ Expo
-# ===============================
+# expo
 .expo/
 .expo-shared/
 .expo-cache/
 .expo/web/
 
-# ===============================
-# 🤖 Android build files
-# ===============================
+# android/iOS build files
 android/.gradle/
 android/build/
-
-# ⚠️ Google service fayllari — faqat android/app ichidagi fayl kerak!
-# Shuning uchun faqat u joylashgan joyni kiritamiz:
-
-# ===============================
-# 🍏 iOS build files
-# ===============================
 ios/build/
 ios/Pods/
 
-# ===============================
-# 🔒 Lockfiles
-# Agar Yarn ishlatilsa, npm lockfile kirmasin
-# (agar npm ishlatayotgan bo‘lsangiz, bu 2 qatorni o‘chirishingiz mumkin)
+# Lockfiles
 package-lock.json
 npm-shrinkwrap.json
 
-# ===============================
-# 🧱 Build artifacts
-# ===============================
-dist/
-build/
-.cache/
-
-# ===============================
-# 🔑 Environment / credentials
-# ===============================
-*.pem
-cambridge-school-e4a8f-firebase-adminsdk-*.json
-cambridge-school-e4a8f-*.json
-
-# ===============================
-# 🪶 Miscellaneous
-# ===============================
+# Misc
 *.log
 .DS_Store
+.env
 
-# ===============================
-# 🚫 Ignore firebase admin keys (server side)
-# ===============================
-*.firebase-adminsdk-*.json
+# Google Services (faqat android/app ichidagi faylni track qilamiz)
+!android/app/google-services.json
 
-# ===============================
-# ✅ Allow app config files
-# ===============================
-
-# ===============================
-# 🪟 Node exe (Windows uchun)
-# ===============================
-node.exe
+# Expo config files
+!app.config.js
+!eas.json
